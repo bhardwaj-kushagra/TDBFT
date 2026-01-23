@@ -81,3 +81,22 @@ class RSU:
             return 0.5
         alpha, beta = self.global_knowledge[target_id]
         return compute_trust(alpha, beta)
+
+    def incorporate_peer_knowledge(self, other_knowledge: Dict[str, List[float]]):
+        """
+        Merges trust knowledge from another RSU.
+        Uses a weighted average approach.
+        """
+        for vid, params in other_knowledge.items():
+            other_alpha, other_beta = params
+            
+            if vid not in self.global_knowledge:
+                self.global_knowledge[vid] = [1.0, 1.0]
+                
+            my_params = self.global_knowledge[vid]
+            
+            # Merge Strategy: Average the parameters (Consensus)
+            # new = (mine + other) / 2
+            my_params[0] = (my_params[0] + other_alpha) / 2
+            my_params[1] = (my_params[1] + other_beta) / 2
+

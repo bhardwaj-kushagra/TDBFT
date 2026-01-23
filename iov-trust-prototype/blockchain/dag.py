@@ -37,3 +37,22 @@ class DAG:
 
     def get_history(self):
         return self.blocks.values()
+
+    def merge_with(self, other_dag):
+        """
+        Merges blocks from another DAG into this one.
+        Resolves tips.
+        """
+        for block_id, block in other_dag.blocks.items():
+            if block_id not in self.blocks:
+                self.blocks[block_id] = block
+        
+        # Merge tips: Union of tips
+        # In a real DAG this is complex (checking ancestry).
+        # Simulated: Just ensure all tips are tracked.
+        # But for simplicity, let's just append the other tips to our tips
+        # and keep the last 5 to avoid explosion.
+        
+        combined_tips = list(set(self.tips + other_dag.tips))
+        self.tips = combined_tips[-5:] # Keep latest 5 tips
+

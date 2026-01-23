@@ -6,8 +6,8 @@ Provides a simple interface to run trust simulations without SUMO.
 from .trust_model import TrustModel
 
 class Simulator:
-    def __init__(self, num_vehicles=20, percent_malicious=0.2, percent_swing=0.1):
-        self.model = TrustModel(num_vehicles, percent_malicious, percent_swing)
+    def __init__(self, num_vehicles=20, percent_malicious=0.2, percent_swing=0.1, num_rsus=2):
+        self.model = TrustModel(num_vehicles, percent_malicious, percent_swing, num_rsus)
         
     def run(self, steps=100, interactions_per_step=20):
         """
