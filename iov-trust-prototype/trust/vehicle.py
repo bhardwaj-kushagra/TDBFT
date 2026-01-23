@@ -70,11 +70,15 @@ class Vehicle:
 
     def record_interaction(self, target_id: str, is_positive: bool):
         """
-        Update knowledge about a target vehicle based on an interaction.
+        Update knowledge about a target vehicle based on an interaction (Section III-A).
         """
         alpha, beta = self.interactions.get(target_id, (1.0, 1.0))
         new_alpha, new_beta = update_parameters(alpha, beta, is_positive)
         self.interactions[target_id] = (new_alpha, new_beta)
+        
+    def get_interaction_stats(self, target_id: str):
+        """Returns direct access to alpha/beta for RSU collection."""
+        return self.interactions.get(target_id, (1.0, 1.0))
 
     def __repr__(self):
         return f"<Vehicle {self.id} | Malicious: {self.is_malicious} | Trust: {self.global_trust_score:.2f}>"

@@ -65,39 +65,44 @@ class TrustModel:
 
     def update_global_trust(self, sync_rsus: bool = True):
         """
-        1. Vehicles report to assigned RSUs.
-        2. RSUs update local knowledge.
-        3. (Optional) RSUs sync with each other to form Global Consensus.
+        Orchestrates Section III-C (VehicleRank) and Section IV (Consensus Sync).
+        
+        1. Collect all local trust reports (Section III-A/B).
+        2. RSUs compute VehicleRank (Section III-C).
+        3. RSUs sync finalized scores (Section IV).
         """
         all_ids = list(self.vehicles.keys())
         
-        # Phase 1: Reporting to assigned RSUs
-        for subject_id in all_ids:
-            # Gather reports about subject_id
-            for reporter_id in all_ids:
-                if reporter_id == subject_id:
-                    continue
-                
-                reporter = self.vehicles[reporter_id]
-                if subject_id in reporter.interactions:
-                    trust_score = reporter.get_local_trust(subject_id)
-                    
-                    # Reporter sends this to ITS OWN assigned RSU
-                    my_rsu = self.vehicle_rsu_map[reporter_id]
-                    my_rsu.aggregate_trust_reports(subject_id, [trust_score])
+        # Phase 1: Data Collection
+        # Gather the full trust graph (Adjacency Matrix inputs)
+        # In a real scenario, vehicles send reports to RSU.
+        # Here we simulate RSU pulling observations from its assigned region.
         
-        # Phase 2: RSU Synchronization (Consensus)
+        for rsu in self.rsus:
+            # RSU builds its view of the graph
+            # This RSU manages a subset of vehicles, but needs full graph for PageRank?
+            # Usually PageRank is global. 
+            # Simplified: Each RSU collects ALL info (shared ledger/gossiping) 
+            # OR computes based on partial view.
+            # Paper implies RSUs are Edge nodes. Let's assume full visibility for prototype.
+            
+            adjacency_reports = {}
+            for reporter_id in all_ids:
+                reporter = self.vehicles[reporter_id]
+                adjacency_reports[reporter_id] = reporter.interactions
+                
+            # Phase 2: Compute VehicleRank (Section III-C)
+            rsu.compute_vehiclerank(all_ids, adjacency_reports)
+        
+        # Phase 3: RSU Synchronization (Consensus) - Section IV
         if sync_rsus:
-            # Simple Gossiping: Everyone merges with everyone
-            # In simulation, we just iterate and merge
+            # Sync the computed Global Trust Vectors
             for rsu in self.rsus:
                 for other_rsu in self.rsus:
                     if rsu.id != other_rsu.id:
-                        rsu.incorporate_peer_knowledge(other_rsu.global_knowledge)
+                        rsu.incorporate_peer_knowledge(other_rsu.global_trust_vector)
 
-        # Phase 3: Push Final Scores back to vehicles (for simulation/plotting)
-        # We assume after Sync, all RSUs have converged (or close enough).
-        # We take the score from the vehicle's assigned RSU as the authority.
+        # Phase 4: Push Final Scores back to vehicles
         for vid, v in self.vehicles.items():
             assigned_rsu = self.vehicle_rsu_map[vid]
             new_global = assigned_rsu.get_global_trust(vid)

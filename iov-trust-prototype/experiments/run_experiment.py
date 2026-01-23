@@ -11,7 +11,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
 from trust.simulator import Simulator
 from blockchain.dag import DAG
-from blockchain.validator import select_validators
+from blockchain.validator import select_validators, check_consensus_weighted
 from experiments.plots import (
     plot_trust_evolution, 
     plot_detection_metrics, 
@@ -22,7 +22,7 @@ from experiments.plots import (
 
 def run():
     # 1. Setup
-    print("Initializing Experiment...")
+    print("Initializing Experiment (BayesTrust + VehicleRank)...")
     # 10% Malicious, 10% Swing
     # NEW: 2 RSUs
     sim = Simulator(num_vehicles=30, percent_malicious=0.15, percent_swing=0.10, num_rsus=2)
@@ -64,32 +64,38 @@ def run():
                 # get_local_trust returns computed trust based on interactions so far
                 swing_local_history.append(observer.get_local_trust(target_swing.id))
         
-        # B. Blockchain Logic - MULTI-DAG
-        # 1. Rank & Select Validators
+        # B. Blockchain Logic - MULTI-DAG (Section IV: Trust-DBFT)
+        # 1. Rank & Select Committee
         ranked_vehicles = sim.model.get_ranked_vehicles()
-        validators = select_validators(ranked_vehicles, top_n=3)
+        committee_size = 5 # config c
+        committee = select_validators(ranked_vehicles, top_n=committee_size)
         
-        if validators:
-            # 2. Multiple blocks could be proposed by different validators in different regions
-            # For simplicity: Validator 1 -> DAG 1, Validator 2 -> DAG 2
+        if committee:
+            # Check Weighted Consensus (Abstracted Section IV-B)
+            # Assuming proposal is "Good" - will the committee pass it?
+            consensus_reached = check_consensus_weighted(committee)
             
-            # Primary Validator (DAG 1)
-            v1 = validators[0]
-            snapshot1 = {v.id: v.global_trust_score for v in ranked_vehicles}
-            dags[0].add_block(data=snapshot1, validator_id=v1.id)
+            if consensus_reached:
+                # Primary Validator (DAG 1)
+                v1 = committee[0] # Leader
+                snapshot1 = {v.id: v.global_trust_score for v in ranked_vehicles}
+                dags[0].add_block(data=snapshot1, validator_id=v1.id)
 
-            if len(validators) > 1:
-                v2 = validators[1]
-                snapshot2 = {v.id: v.global_trust_score for v in ranked_vehicles} # In real world, might differ slightly
-                dags[1].add_block(data=snapshot2, validator_id=v2.id)
+                if len(committee) > 1:
+                    v2 = committee[1] # Backup/Second Region Leader
+                    snapshot2 = {v.id: v.global_trust_score for v in ranked_vehicles} 
+                    dags[1].add_block(data=snapshot2, validator_id=v2.id)
 
-            # 3. MERGE DAGs (Cross-Shard/Region Sync)
-            # Both DAGs learn about each other's blocks
-            dags[0].merge_with(dags[1])
-            dags[1].merge_with(dags[0])
+                # 3. MERGE DAGs (Cross-Shard/Region Sync)
+                dags[0].merge_with(dags[1])
+                dags[1].merge_with(dags[0])
+            else:
+                # print(f"Step {t}: Consensus Failed.")
+                pass
             
         if t % 10 == 0:
-            print(f"Step {t}: Top Validator = {validators[0].id if validators else 'None'} | DAG Size: {len(dags[0].blocks)}")
+            leader_id = committee[0].id if committee else 'None'
+            print(f"Step {t}: Leader = {leader_id} | DAG Size: {len(dags[0].blocks)}")
 
     # 3. Analysis
     print("Simulation Loop Complete.")
