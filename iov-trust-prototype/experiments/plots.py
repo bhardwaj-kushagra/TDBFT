@@ -5,39 +5,113 @@ import matplotlib.pyplot as plt
 import numpy as np
 import os
 
+def normalize_histories(vehicles):
+    """
+    Normalizes trust scores per time step using Min-Max normalization.
+    Returns:
+        dict: {vid: np.array(normalized_history)}
+    """
+    if not vehicles:
+        return {}
+    
+    # Check length
+    sample_v = next(iter(vehicles.values()))
+    n_steps = len(sample_v.trust_history)
+    
+    # 1. Gather Matrix: (Steps, Vehicles)
+    # maintain consistent order
+    vids = list(vehicles.keys())
+    raw_matrix = np.zeros((n_steps, len(vids)))
+    
+    for i, vid in enumerate(vids):
+        hist = vehicles[vid].trust_history
+        # Truncate or pad if mismatch (shouldn't happen in sync sim)
+        length = min(len(hist), n_steps) 
+        raw_matrix[:length, i] = hist[:length]
+        
+    # 2. Normalize per Step (Row-wise)
+    norm_matrix = np.zeros_like(raw_matrix)
+    
+    for t in range(n_steps):
+        row = raw_matrix[t, :]
+        rmin, rmax = np.min(row), np.max(row)
+        if rmax > rmin:
+            norm_matrix[t, :] = (row - rmin) / (rmax - rmin + 1e-9)
+        else:
+            norm_matrix[t, :] = 0.5 # Default if all equal
+            
+    # 3. Distribute back
+    normalized_data = {}
+    for i, vid in enumerate(vids):
+        normalized_data[vid] = norm_matrix[:, i]
+        
+    return normalized_data
+
 def plot_trust_evolution(vehicles, save_path="results/trust_evolution.png"):
     """
-    Plots the history of global trust scores.
-    Graph 1 Change: Uses Percentile-based thresholds instead of absolute ones.
+    Plots the history of global trust scores (Normalized).
+    Graph 1 Fix: Plot t_norm. Honest vs Malicious. Percentile lines.
+    "Since VehicleRank produces relative trust scores... global trust values are min-max normalized..."
     """
+    norm_data = normalize_histories(vehicles)
+    
     plt.figure(figsize=(10, 6))
     
-    final_scores = []
+    # Burn-in: Skip first 5 steps
+    burn_in = 5
+    
+    all_final_scores = []
     
     for vid, v in vehicles.items():
+        if vid not in norm_data: continue
+        
+        full_hist = norm_data[vid]
+        if len(full_hist) <= burn_in: continue
+        
+        history = full_hist[burn_in:]
+        steps = range(burn_in, burn_in + len(history))
+        
         color = 'red' if v.is_malicious else 'green'
-        alpha = 0.5 if v.is_malicious else 0.3
-        plt.plot(v.trust_history, color=color, alpha=alpha, label='_nolegend_')
-        final_scores.append(v.global_trust_score)
+        alpha = 0.15 if v.is_malicious else 0.1 # Lighter for individual traces
         
-    # Legend hack
-    plt.plot([], [], color='red', label='Malicious')
-    plt.plot([], [], color='green', label='Honest')
+        plt.plot(steps, history, color=color, alpha=alpha, label='_nolegend_')
+        all_final_scores.append(history[-1])
+
+    # Add Percentile Trends (Median of Honest vs Median of Malicious?)
+    # Or just population percentiles. 
+    # Let's plot the MEDIAN trend line for Honest vs Malicious to show separation clearly.
     
-    # Calculate Percentiles from Final Step
-    if final_scores:
-        p30 = np.percentile(final_scores, 30) # Bottom 30% might be malicious cutoff?
-        p_top30 = np.percentile(final_scores, 70) # Top 30% Trusted
+    vids = list(vehicles.keys())
+    if norm_data:
+        n_steps = len(next(iter(norm_data.values())))
+        steps = range(burn_in, n_steps)
         
-        # Plot Dynamic Thresholds
-        plt.axhline(y=p_top30, color='blue', linestyle='--', label=f'Top 30% (>{p_top30:.4f})')
-        plt.axhline(y=p30, color='orange', linestyle='--', label=f'Bottom 30% (<{p30:.4f})')
-    
-    plt.title("Evolution of Global Trust Scores (Percentile Thresholds)")
+        honest_ids = [v.id for v in vehicles.values() if not v.is_malicious]
+        mal_ids = [v.id for v in vehicles.values() if v.is_malicious]
+        
+        honest_matrix = np.array([norm_data[uid] for uid in honest_ids])
+        mal_matrix = np.array([norm_data[uid] for uid in mal_ids])
+        
+        if honest_matrix.shape[0] > 0:
+            h_median = np.median(honest_matrix, axis=0)[burn_in:]
+            plt.plot(steps, h_median, color='darkgreen', linewidth=2, label='Honest Median')
+            
+        if mal_matrix.shape[0] > 0:
+            m_median = np.median(mal_matrix, axis=0)[burn_in:]
+            plt.plot(steps, m_median, color='darkred', linewidth=2, label='Malicious Median')
+            
+        # Top 30% cutoff line (approximate from last step)
+        # Actually, let's plot the Top 30% threshold over time
+        all_matrix = np.array([norm_data[uid] for uid in vids])
+        p70_trend = np.percentile(all_matrix, 70, axis=0)[burn_in:]
+        plt.plot(steps, p70_trend, color='blue', linestyle='--', label='Top 30% (Committee Cutoff)')
+
+    plt.ylim(0, 1.05)
+    plt.title("Evolution of Global Trust Scores (Normalized)")
     plt.xlabel("Simulation Step")
-    plt.ylabel("Global Trust Score")
-    plt.legend()
-    plt.grid(True)
+    plt.ylabel("Normalized Trust Score")
+    plt.legend(loc='upper left')
+    plt.grid(True, alpha=0.3)
     
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
     plt.savefig(save_path)
@@ -46,47 +120,66 @@ def plot_trust_evolution(vehicles, save_path="results/trust_evolution.png"):
 
 def plot_detection_metrics(vehicles, save_path="results/detection_metrics.png"):
     """
-    Plots Detection Rate (TPR) and False Positive Rate (FPR) vs Trust Threshold.
-    Graph 5 Change: Sweeps thresholds over observed range, not [0,1].
+    Plots Detection Performance across Trust Percentiles.
+    Graph 3 Fix: X-axis = Trust Percentile (0-100).
+    "Detection performance is evaluated across trust percentiles..."
     """
-    import numpy as np
+    # Use normalized scores from final step
+    norm_data = normalize_histories(vehicles)
     
-    malicious_nodes = [v for v in vehicles.values() if v.is_malicious]
-    honest_nodes = [v for v in vehicles.values() if not v.is_malicious]
+    # Gather (score, is_maliciuos)
+    data_points = []
+    for vid, v in vehicles.items():
+        if vid in norm_data:
+            final_score = norm_data[vid][-1]
+            data_points.append({'score': final_score, 'is_mal': v.is_malicious})
+            
+    if not data_points: return
     
-    all_scores = [v.global_trust_score for v in vehicles.values()]
-    min_trust = min(all_scores) if all_scores else 0
-    max_trust = max(all_scores) if all_scores else 1
+    # Sort by score ascending
+    data_points.sort(key=lambda x: x['score'])
+    scores = [x['score'] for x in data_points]
     
-    # Graph 5 Fix: Adaptive Sweep
-    thresholds = np.linspace(min_trust, max_trust + 0.0001, 50)
+    total_malicious = sum(1 for x in data_points if x['is_mal'])
+    total_honest = len(data_points) - total_malicious
     
     tprs = []
     fprs = []
+    percentiles = np.linspace(0, 100, 100)
     
-    total_malicious = len(malicious_nodes)
-    total_honest = len(honest_nodes)
-    
-    if total_malicious == 0 or total_honest == 0:
-        return
-
-    for t in thresholds:
-        # Detected if trust < t
-        detected_malicious = [v for v in malicious_nodes if v.global_trust_score < t]
-        false_positives = [v for v in honest_nodes if v.global_trust_score < t]
+    for p in percentiles:
+        # Threshold at p-th percentile
+        thresh = np.percentile(scores, p)
         
-        tpr = len(detected_malicious) / total_malicious
-        fpr = len(false_positives) / total_honest
+        # Predicted Malicious if score < thresh
+        # (Low trust = Malicious)
+        
+        # Count stats
+        tp = sum(1 for x in data_points if x['score'] < thresh and x['is_mal'])
+        fp = sum(1 for x in data_points if x['score'] < thresh and not x['is_mal'])
+        
+        tpr = tp / total_malicious if total_malicious > 0 else 0
+        fpr = fp / total_honest if total_honest > 0 else 0
         
         tprs.append(tpr)
         fprs.append(fpr)
         
     plt.figure(figsize=(10, 6))
-    plt.plot(thresholds, tprs, label='Detection Rate (TPR)', color='blue')
-    plt.plot(thresholds, fprs, label='False Positive Rate (FPR)', color='red', linestyle='--')
+    plt.plot(percentiles, tprs, label='Detection Rate (TPR)', color='blue')
+    plt.plot(percentiles, fprs, label='False Positive Rate (FPR)', color='red', linestyle='--')
     
-    plt.title(f"Detection Performance (Range: {min_trust:.4f} - {max_trust:.4f})")
-    plt.xlabel("Trust Threshold")
+    # Mark "Median of Bottom 30%"
+    # 30th percentile is x=30
+    idx_30 = 30 # roughly index 30 in linspace(0,100,100)
+    if idx_30 < len(tprs):
+        plt.axvline(x=30, color='green', linestyle=':', label='Bottom 30% Threshold')
+        plt.annotate(f'TPR={tprs[idx_30]:.2f}', 
+                     xy=(30, tprs[idx_30]), 
+                     xytext=(35, tprs[idx_30]-0.15),
+                     arrowprops=dict(facecolor='black', shrink=0.05))
+
+    plt.title("Detection Performance vs Trust Percentile")
+    plt.xlabel("Trust Threshold (Percentile)")
     plt.ylabel("Rate")
     plt.legend()
     plt.grid(True)
@@ -98,55 +191,55 @@ def plot_detection_metrics(vehicles, save_path="results/detection_metrics.png"):
 
 def plot_comparative_trust(vehicles, save_path="results/comparative_trust_normalized.png"):
     """
-    Graph 2 Change: Plot Normalized Difference (Z-Score) or Rank Percentile.
+    Graph 2: Normalized Trust Difference (Z-Score)
+    "Z-score is computed on t_norm... Mention cold start explicitly."
     """
-    import numpy as np
+    norm_data = normalize_histories(vehicles)
+    if not norm_data: return
 
     # Group histories
-    histories = {
-        'HONEST': [],
-        'MALICIOUS': [],
-        'SWING': []
-    }
+    histories = {'HONEST': [], 'MALICIOUS': [], 'SWING': []}
     
-    for v in vehicles.values():
-        if v.behavior_type in histories:
-            histories[v.behavior_type].append(v.trust_history)
+    for vid, v in vehicles.items():
+        if vid in norm_data:
+            histories[v.behavior_type].append(norm_data[vid])
 
-    # 1. Calculate Aggregates per Step
-    # Assume all equal length
-    if not vehicles: return
-    n_steps = len(list(vehicles.values())[0].trust_history)
-    steps = range(n_steps)
+    # Calc global stats per step
+    all_hists = np.array(list(norm_data.values())) # (N_vehicles, N_steps) - wait, dict values order?
+    # Better:
+    all_hists = np.array([norm_data[uid] for uid in vehicles.keys()])
     
-    mean_trust_per_step = []
-    std_trust_per_step = []
+    # Transpose to (Steps, Vehicles) for step-wise stats
+    step_data = all_hists.T 
     
-    for t_idx in range(n_steps):
-        # Gather all scores at this step
-        step_scores = [v.trust_history[t_idx] for v in vehicles.values()]
-        mean_trust_per_step.append(np.mean(step_scores))
-        std_trust_per_step.append(np.std(step_scores) + 1e-9) # Avoid div0
-        
+    mean_per_step = np.mean(step_data, axis=1)
+    std_per_step = np.std(step_data, axis=1) + 1e-9
+    
     plt.figure(figsize=(10, 6))
+    burn_in = 5
+    steps = np.arange(len(mean_per_step))
     
-    # Plot Normalized Z-Scores per group
+    # Plot Z-scores
     for cat, lists in histories.items():
         if not lists: continue
         
-        avg_raw = np.mean(lists, axis=0)
-        # Check lengths match
-        if len(avg_raw) != len(mean_trust_per_step): continue
+        # Average trust of this group at each step
+        group_matrix = np.array(lists).T # (Steps, GroupSize)
+        group_avg = np.mean(group_matrix, axis=1)
         
-        # Normalized: (Average_of_Group - Global_Mean) / Global_Std
-        normalized = (avg_raw - mean_trust_per_step) / std_trust_per_step
+        # Z-score of the GROUP AVERAGE relative to GLOBAL dist
+        # z = (GroupMean - GlobalMean) / GlobalStd
+        z_scores = (group_avg - mean_per_step) / std_per_step
         
-        plt.plot(steps, normalized, label=f'{cat} (Normalized)', markevery=10)
+        # Apply burn-in for plotting
+        plt.plot(steps[burn_in:], z_scores[burn_in:], label=f'{cat} (Z-Score)', markevery=10)
 
     plt.axhline(0, color='black', linestyle='--', alpha=0.5)
-    plt.title("Normalized Trust Difference (Z-Score) vs Time")
-    plt.xlabel("Time (steps)")
-    plt.ylabel("Z-Score (Std Devs from Mean)")
+    plt.fill_between(steps[burn_in:], -1, 1, color='gray', alpha=0.2, label='±1 Std Dev')
+
+    plt.title("Normalized Trust Difference (Z-Score)\n(First 5 steps omitted for cold-start)")
+    plt.xlabel("Simulation Step")
+    plt.ylabel("Z-Score (Std Devs from Global Mean)")
     plt.legend()
     plt.grid(True)
     
@@ -157,47 +250,54 @@ def plot_comparative_trust(vehicles, save_path="results/comparative_trust_normal
 
 def plot_final_trust_distribution(vehicles, save_path="results/final_rank_distribution.png"):
     """
-    Graph 4 Change: Plot Rank Index / Distance from Committee Cutoff.
+    Graph 4 Fix: Label Y-axis as Normalized Global Trust.
+    Committee is Top-k ranks.
     """
-    import numpy as np
+    norm_data = normalize_histories(vehicles)
     
-    # Sort all vehicles by trust
-    sorted_vehicles = sorted(vehicles.values(), key=lambda x: x.global_trust_score, reverse=True)
+    # Build list of (vid, score, is_mal)
+    data = []
+    for vid, v in vehicles.items():
+        if vid in norm_data:
+            score = norm_data[vid][-1] # Final step
+            data.append((v, score))
+            
+    # Sort by score desc (Rank 1 is highest score)
+    data.sort(key=lambda x: x[1], reverse=True)
     
-    ranks = range(1, len(sorted_vehicles) + 1)
-    scores = [v.global_trust_score for v in sorted_vehicles]
-    colors = ['red' if v.is_malicious else 'green' for v in sorted_vehicles]
-    ids = [v.id for v in sorted_vehicles]
+    ranks = range(1, len(data) + 1)
+    scores = [x[1] for x in data]
+    colors = ['red' if x[0].is_malicious else 'green' for x in data]
+    ids = [x[0].id for x in data]
     
-    committee_size = 5 # As per experiment
+    committee_size = 5
     
     plt.figure(figsize=(12, 6))
-    
-    # Scatter plot of Ranks
     plt.scatter(ranks, scores, c=colors, s=100, alpha=0.7)
     
-    # Draw Committee Cutoff
-    if len(sorted_vehicles) >= committee_size:
-        cutoff_score = sorted_vehicles[committee_size-1].global_trust_score
+    if len(data) >= committee_size:
         plt.axvline(x=committee_size + 0.5, color='blue', linestyle='--', label='Committee Cutoff')
-        plt.axhline(y=cutoff_score, color='gray', linestyle=':', alpha=0.5)
+        # Threshold at cutoff
+        cutoff = scores[committee_size-1]
+        plt.axhline(y=cutoff, color='gray', linestyle=':', alpha=0.5)
 
-    # Label points
+    # Label top-k and bottom-k
+    top_k, bottom_k = 5, 5
+    n_vehicles = len(data)
+    
     for i, txt in enumerate(ids):
-        # Annotate sparsely to avoid clutter
-        if i < 10 or i % 5 == 0:
-            plt.annotate(txt, (ranks[i], scores[i]), fontsize=8, alpha=0.7)
+        rank = i + 1
+        if rank <= top_k or rank > (n_vehicles - bottom_k):
+             plt.annotate(txt, (ranks[i], scores[i]), fontsize=8, alpha=0.7)
 
     plt.title("Vehicle Ranking & Committee Selection")
     plt.xlabel("Rank (1 = Highest Trust)")
-    plt.ylabel("Global Trust Score")
+    plt.ylabel("Normalized Global Trust (VehicleRank)")
     
-    # Custom Legend
     from matplotlib.lines import Line2D
     custom_lines = [Line2D([0], [0], color='green', marker='o', linestyle=''),
                     Line2D([0], [0], color='red', marker='o', linestyle='')]
     plt.legend(custom_lines, ['Honest', 'Malicious'])
-    
     plt.grid(True, alpha=0.3)
     
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
@@ -207,21 +307,30 @@ def plot_final_trust_distribution(vehicles, save_path="results/final_rank_distri
 
 def plot_swing_analysis(global_history, local_history, save_path="results/swing_analysis.png"):
     """
-    Graph 3 Change: Plots Sliding Window Local Trust vs Global Trust.
-    User Note: "Plot local trust over a sliding window... This will show Oscillation"
+    Graph 6: Swing Attacker Dynamics.
+    "Label local trust as Bayesian... Label global trust as smoothed VehicleRank"
     """
     plt.figure(figsize=(10, 6))
     
-    plt.plot(global_history, label='Global Trust (Smoothed/Decaying)', color='purple', linewidth=2)
-    plt.plot(local_history, label='Local Trust (Sliding Window=20)', color='orange', linestyle='-', alpha=0.8)
+    # Global history should already be normalized by caller (or here if we had context)
+    # Assuming caller passes normalized trace
+    plt.plot(global_history, label='Global Trust (Smoothed VehicleRank)', color='purple', linewidth=2)
+    plt.plot(local_history, label='Local Trust (Bayesian Window=10)', color='orange', linestyle='-', alpha=0.8)
     
-    plt.title("Swing Attacker Dynamics: Global Stability vs Local Oscillation")
+    plt.title("Swing Attacker Dynamics")
     plt.xlabel("Simulation Step")
     plt.ylabel("Trust Score")
     plt.legend()
     plt.grid(True)
     
+    # Add text box
+    textstr = "While swing attackers manipulate local trust,\ntheir global trust remains suppressed due to\ntemporal smoothing and network-wide propagation."
+    props = dict(boxstyle='round', facecolor='wheat', alpha=0.2)
+    plt.text(0.05, 0.05, textstr, transform=plt.gca().transAxes, fontsize=9,
+        verticalalignment='bottom', bbox=props)
+    
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
     plt.savefig(save_path)
     print(f"Plot saved to {save_path}")
     plt.close()
+

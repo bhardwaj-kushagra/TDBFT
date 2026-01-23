@@ -25,7 +25,8 @@ def run():
     print("Initializing Experiment (BayesTrust + VehicleRank)...")
     # 10% Malicious, 10% Swing
     # NEW: 2 RSUs
-    sim = Simulator(num_vehicles=30, percent_malicious=0.15, percent_swing=0.10, num_rsus=2)
+    sim = Simulator(num_vehicles=200, percent_malicious=0.1, num_rsus=20)
+    #sim = Simulator(num_vehicles=30, percent_malicious=0.15, percent_swing=0.10, num_rsus=2)
     
     # NEW: Multiple DAGs (one per RSU/Region)
     dags = [DAG(), DAG()] 
@@ -56,13 +57,25 @@ def run():
         
         # Capture History for Swing Plot
         if target_swing:
-            # 1. Capture current Global Trust
-            swing_global_history.append(target_swing.global_trust_score)
+            # 1. Capture current Global Trust (NORMALIZED for visualization)
+            # t_norm = (t - min) / (max - min)
+            # We need the full vector to normalize
+            all_scores = [v.global_trust_score for v in sim.model.vehicles.values()]
+            g_min, g_max = min(all_scores), max(all_scores)
+            
+            raw_val = target_swing.global_trust_score
+            if g_max > g_min:
+                norm_val = (raw_val - g_min) / (g_max - g_min + 1e-9)
+            else:
+                norm_val = 0.5
+                
+            swing_global_history.append(norm_val)
             
             # 2. Capture Local Trust from the Observer's perspective
             if observer:
                 # Use sliding window for Plot 3 (Swing Analysis)
-                swing_local_history.append(observer.get_windowed_local_trust(target_swing.id, window_size=20))
+                # Graph 6 Change: Option A (best): Reduce sliding window to 10
+                swing_local_history.append(observer.get_windowed_local_trust(target_swing.id, window_size=10))
         
         # B. Blockchain Logic - MULTI-DAG (Section IV: Trust-DBFT)
         # 1. Rank & Select Committee
