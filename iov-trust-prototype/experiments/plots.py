@@ -334,3 +334,74 @@ def plot_swing_analysis(global_history, local_history, save_path="results/swing_
     print(f"Plot saved to {save_path}")
     plt.close()
 
+def plot_trust_convergence(vehicles, save_path="results/trust_convergence.png"):
+    """
+    Plots the fraction of nodes with stable rank over time.
+    Shows how fast the system settles.
+    Metric: Fraction of nodes whose rank changed by <= 5% of total nodes since last step.
+    """
+    import numpy as np
+    
+    # 1. Build Score Matrix (Steps x Vehicles)
+    if not vehicles: return
+    
+    vids = sorted(list(vehicles.keys()))
+    sample_v = vehicles[vids[0]]
+    n_steps = len(sample_v.trust_history)
+    n_vehicles = len(vids)
+    
+    score_matrix = np.zeros((n_steps, n_vehicles))
+    for i, vid in enumerate(vids):
+        hist = vehicles[vid].trust_history
+        length = min(len(hist), n_steps)
+        score_matrix[:length, i] = hist[:length]
+        
+    # 2. Compute Ranks at each step
+    # Rank 0 = Highest Trust
+    rank_matrix = np.zeros((n_steps, n_vehicles), dtype=int)
+    
+    for t in range(n_steps):
+        scores = score_matrix[t, :]
+        # efficient rank: argsort of argsort of negated scores
+        temp = np.argsort(-scores)
+        ranks = np.empty_like(temp)
+        ranks[temp] = np.arange(n_vehicles)
+        rank_matrix[t, :] = ranks
+        
+    # 3. Compute Stability
+    # Threshold for "stable" = e.g. 5% of N
+    threshold = max(1, int(0.05 * n_vehicles))
+    
+    stability_fraction = []
+    # Skip t=0
+    plot_steps = range(1, n_steps)
+    
+    for t in plot_steps:
+        diffs = np.abs(rank_matrix[t] - rank_matrix[t-1])
+        stable_count = np.sum(diffs <= threshold)
+        frac = stable_count / n_vehicles
+        stability_fraction.append(frac)
+        
+    # 4. Plot
+    plt.figure(figsize=(10, 6))
+    
+    burn_in = 5
+    # Adjust plot steps if burn_in applies
+    valid_indices = [i for i, s in enumerate(plot_steps) if s > burn_in]
+    
+    if valid_indices:
+        plt.plot([plot_steps[i] for i in valid_indices], [stability_fraction[i] for i in valid_indices], color='navy', linewidth=2)
+    else:
+        plt.plot(plot_steps, stability_fraction, color='navy', linewidth=2)
+        
+    plt.title(f"Trust Convergence Time\n(Stable Rank = change <= {threshold} positions)")
+    plt.xlabel("Simulation Step")
+    plt.ylabel("Fraction of Nodes with Stable Rank")
+    plt.ylim(0, 1.05)
+    plt.grid(True)
+    
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    plt.savefig(save_path)
+    print(f"Plot saved to {save_path}")
+    plt.close()
+

@@ -17,7 +17,8 @@ from experiments.plots import (
     plot_detection_metrics, 
     plot_swing_analysis,
     plot_comparative_trust, 
-    plot_final_trust_distribution
+    plot_final_trust_distribution,
+    plot_trust_convergence
 )
 
 def run():
@@ -123,6 +124,7 @@ def run():
     plot_detection_metrics(sim.model.vehicles)
     plot_comparative_trust(sim.model.vehicles)
     plot_final_trust_distribution(sim.model.vehicles)
+    plot_trust_convergence(sim.model.vehicles)
     
     if target_swing and observer:
         plot_swing_analysis(swing_global_history, swing_local_history)
