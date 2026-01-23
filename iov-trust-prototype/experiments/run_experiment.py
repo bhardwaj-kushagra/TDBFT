@@ -18,8 +18,147 @@ from experiments.plots import (
     plot_swing_analysis,
     plot_comparative_trust, 
     plot_final_trust_distribution,
-    plot_trust_convergence
-)
+    plot_trust_convergence,
+    normalize_histories
+) 
+
+def calculate_statistics(vehicles, dags, partial_dags_count, total_steps):
+    """
+    Calculates and prints:
+    A. Final Trust Statistics (Normalized)
+    B. Detection Performance (at optimal threshold)
+    C. Consensus Success Rate
+    D. Trust Convergence Time
+    E. Multi-RSU Sync Stats
+    """
+    import numpy as np
+    
+    print("\n" + "="*50)
+    print("       EXPERIMENT RESULTS & STATISTICS")
+    print("="*50)
+    
+    # --- Data Prep: Get Normalized Final Scores ---
+    # We use the same normalization logic as the plots:
+    # 1. Get raw final vector
+    final_raw = {vid: v.global_trust_score for vid, v in vehicles.items()}
+    vals = list(final_raw.values())
+    g_min, g_max = min(vals), max(vals)
+    
+    final_norm = {}
+    for vid, raw in final_raw.items():
+        if g_max > g_min:
+            final_norm[vid] = (raw - g_min) / (g_max - g_min + 1e-9)
+        else:
+            final_norm[vid] = 0.5
+            
+    # --- A. Final Trust Statistics (per vehicle type) ---
+    print("\n[A] Final Trust Statistics (Normalized):")
+    stats = {'HONEST': [], 'SWING': [], 'MALICIOUS': []}
+    
+    for vid, v in vehicles.items():
+        if v.behavior_type in stats:
+            stats[v.behavior_type].append(final_norm[vid])
+            
+    print(f"{'Vehicle Type':<15} {'Avg Final Trust':<20} {'Std Dev':<15}")
+    print("-" * 50)
+    for v_type, scores in stats.items():
+        if scores:
+            avg = np.mean(scores)
+            std = np.std(scores)
+            print(f"{v_type:<15} {avg:.4f}{'':<14} {std:.4f}")
+    
+    # --- B. Detection Performance (at "Optimal" Threshold) ---
+    print("\n[B] Detection Performance:")
+    # Operating Point: Median of Bottom 30% of scores (heuristic from Plot 3)
+    all_scores = list(final_norm.values())
+    threshold_val = np.percentile(all_scores, 30)
+    
+    tp, fp, tn, fn = 0, 0, 0, 0
+    
+    for vid, score in final_norm.items():
+        is_mal = vehicles[vid].is_malicious
+        predicted_mal = score < threshold_val
+        
+        if is_mal and predicted_mal: tp += 1
+        if not is_mal and predicted_mal: fp += 1
+        if not is_mal and not predicted_mal: tn += 1
+        if is_mal and not predicted_mal: fn += 1
+        
+    tpr = tp / (tp + fn) if (tp + fn) > 0 else 0
+    fpr = fp / (fp + tn) if (fp + tn) > 0 else 0
+    precision = tp / (tp + fp) if (tp + fp) > 0 else 0
+    recall = tpr # Same thing
+    
+    print(f"Operating Threshold (Bottom 30%): {threshold_val:.4f}")
+    print(f"{'Metric':<25} {'Value':<10}")
+    print("-" * 35)
+    print(f"{'True Positive Rate (TPR)':<25} {tpr*100:.2f}%")
+    print(f"{'False Positive Rate (FPR)':<25} {fpr*100:.2f}%")
+    print(f"{'Precision':<25} {precision*100:.2f}%")
+    print(f"{'Recall':<25} {recall*100:.2f}%")
+
+    # --- C. Consensus Success Rate ---
+    print("\n[C] Consensus Success Rate:")
+    # Assuming total_steps is the attempts, and DAG height is successes
+    # total_steps is passed in
+    # dags[0] height is successes
+    successes = len(dags[0].blocks)
+    # Note: dags might start with 0 blocks? Or 1 genesis? 
+    # Usually we add blocks during simulation.
+    
+    success_rate = (successes / total_steps) * 100 if total_steps > 0 else 0
+    
+    print(f"{'Metric':<25} {'Value':<10}")
+    print("-" * 35)
+    print(f"{'Total Consensus Rounds':<25} {total_steps}")
+    print(f"{'Successful Blocks':<25} {successes}")
+    print(f"{'Success Rate':<25} {success_rate:.2f}%")
+
+    # --- D. Trust Convergence Time ---
+    print("\n[D] Trust Convergence Time:")
+    # Re-run stability logic simply
+    norm_hist_data = normalize_histories(vehicles)
+    if norm_hist_data:
+        # Just grab one key to get length
+        n_sim_steps = len(next(iter(norm_hist_data.values())))
+        n_nodes = len(vehicles)
+        
+        # Build rank matrix logic again? Or just iterate histories
+        # Let's do a simplified check: When did standard deviation of Honest nodes stabilize?
+        # Or reuse the Rank Stability Metric: fraction > 0.95
+        
+        # We need the full history matrix for Rank Stability
+        # Re-implementing briefly to get the number
+        rank_matrix = np.zeros((n_sim_steps, n_nodes), dtype=int)
+        vids = sorted(list(vehicles.keys()))
+        
+        for t in range(n_sim_steps):
+             # Get vector at t
+             vec = [vehicles[vid].trust_history[t] if t < len(vehicles[vid].trust_history) else 0 for vid in vids]
+             # Rank
+             temp = np.argsort(np.argsort([-x for x in vec]))
+             rank_matrix[t, :] = temp
+             
+        # Check stability
+        converged_at = -1
+        threshold_rank_change = max(1, int(0.05 * n_nodes))
+        
+        for t in range(5, n_sim_steps): # Skip burn-in 5
+             diffs = np.abs(rank_matrix[t] - rank_matrix[t-1])
+             stable_count = np.sum(diffs <= threshold_rank_change)
+             frac = stable_count / n_nodes
+             
+             if frac > 0.90: # 90% stability threshold
+                 converged_at = t
+                 break
+        
+        print(f"Convergence Target: >90% of nodes stable (change <= {threshold_rank_change} ranks)")
+        if converged_at != -1:
+            print(f"Converged at Step: {converged_at}")
+        else:
+             print("Convergence: Not reached (>0.90) in simulation time")
+
+    print("="*50 + "\n")
 
 def run():
     # 1. Setup
@@ -128,6 +267,9 @@ def run():
     
     if target_swing and observer:
         plot_swing_analysis(swing_global_history, swing_local_history)
-    
+        
+    # 5. Print Statistics Table
+    calculate_statistics(sim.model.vehicles, dags, 0, SIMULATION_STEPS)
+
 if __name__ == "__main__":
     run()
