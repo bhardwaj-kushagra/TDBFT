@@ -48,3 +48,7 @@ Combines Bayesian trust computation with a lightweight DAG-based blockchain for 
 3. **Aggregation**: RSU collects local trusts, updates Global Trust using forgetting factor.
 4. **Ranking**: Vehicles ranked by Global Trust.
 5. **Consensus (Mock)**: Top validators selected to record state in DAG.
+
+## Detailed Documentation
+
+For a comprehensive beginner's guide, architecture breakdown, and explanation of the code, please read [PROJECT_DOCUMENTATION.md](PROJECT_DOCUMENTATION.md).
