@@ -1,15 +1,12 @@
-<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+  <input>
+    <net-file value="net.net.xml"/>
+    <route-files value="routes.rou.xml"/>
+  </input>
 
-<configuration xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://sumo.dlr.de/xsd/sumoConfiguration.xsd">
-
-    <input>
-        <net-file value="net.net.xml"/>
-        <route-files value="routes.rou.xml"/>
-    </input>
-
-    <time>
-        <begin value="0"/>
-        <end value="1000"/>
-    </time>
-
+  <time>
+    <begin value="0"/>
+    <end value="7200"/>
+    <step-length value="1"/>
+  </time>
 </configuration>
