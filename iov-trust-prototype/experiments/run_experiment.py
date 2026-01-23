@@ -61,8 +61,8 @@ def run():
             
             # 2. Capture Local Trust from the Observer's perspective
             if observer:
-                # get_local_trust returns computed trust based on interactions so far
-                swing_local_history.append(observer.get_local_trust(target_swing.id))
+                # Use sliding window for Plot 3 (Swing Analysis)
+                swing_local_history.append(observer.get_windowed_local_trust(target_swing.id, window_size=20))
         
         # B. Blockchain Logic - MULTI-DAG (Section IV: Trust-DBFT)
         # 1. Rank & Select Committee

@@ -28,6 +28,10 @@ class Vehicle:
         # We initialize with alpha=1, beta=1 (Trust=0.5) for unknown vehicles.
         self.interactions: Dict[str, Tuple[float, float]] = {}
         
+        # New: Interaction Logs for Sliding Window Analysis
+        # vehicle_id -> list of booleans (outcomes)
+        self.interaction_logs: Dict[str, list] = {}
+        
         # The global trust score assigned to this vehicle by the RSU
         self.global_trust_score = 0.5
         
@@ -76,6 +80,30 @@ class Vehicle:
         new_alpha, new_beta = update_parameters(alpha, beta, is_positive)
         self.interactions[target_id] = (new_alpha, new_beta)
         
+        # Log for sliding window
+        if target_id not in self.interaction_logs:
+            self.interaction_logs[target_id] = []
+        self.interaction_logs[target_id].append(is_positive)
+        
+    def get_windowed_local_trust(self, target_id: str, window_size: int = 20) -> float:
+        """
+        Calculate local trust using only the recent window of interactions.
+        Uses simplistic ratio or re-calculated Beta expectation over the window.
+        """
+        logs = self.interaction_logs.get(target_id, [])
+        if not logs:
+            return 0.5 # Default
+            
+        window = logs[-window_size:]
+        positives = sum(1 for x in window if x)
+        negatives = len(window) - positives
+        
+        # Re-apply Beta expectation logic to just this window
+        # Prior is still 1, 1 for the window scope
+        w_alpha = 1.0 + positives
+        w_beta = 1.0 + negatives
+        return w_alpha / (w_alpha + w_beta)
+
     def get_interaction_stats(self, target_id: str):
         """Returns direct access to alpha/beta for RSU collection."""
         return self.interactions.get(target_id, (1.0, 1.0))
