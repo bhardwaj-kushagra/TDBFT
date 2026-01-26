@@ -12,22 +12,28 @@ class Vehicle:
     BEHAVIOR_MALICIOUS = 'MALICIOUS'
     BEHAVIOR_SWING = 'SWING'
 
-    def __init__(self, vehicle_id: str, behavior_type: str = 'HONEST'):
+    def __init__(self, vehicle_id: str, behavior_type: str = 'HONEST', model_type: str = 'PROPOSED'):
         """
         Initialize a vehicle.
         
         Args:
             vehicle_id (str): Unique identifier.
             behavior_type (str): 'HONEST', 'MALICIOUS', or 'SWING'.
+            model_type (str): Trust model to use.
         """
         self.id = vehicle_id
         self.behavior_type = behavior_type
+        self.model_type = model_type
         self.is_malicious = (behavior_type != self.BEHAVIOR_HONEST)
         
-        # Local Trust Database: vehicle_id -> (alpha, beta)
-        # We initialize with alpha=1, beta=1 (Trust=0.5) for unknown vehicles.
+        # Local Trust Database: vehicle_id -> (alpha, beta) or other params
+        # Bayesian (PROPOSED, BTVR, COBATS, LT_PBFT): (alpha, beta)
+        # BSED: (correct_count, total_count)
         self.interactions: Dict[str, Tuple[float, float]] = {}
         
+        # RTM specific: vehicle_id -> current_trust
+        self.rtm_trust: Dict[str, float] = {}
+
         # New: Interaction Logs for Sliding Window Analysis
         # vehicle_id -> list of booleans (outcomes)
         self.interaction_logs: Dict[str, list] = {}
@@ -68,23 +74,54 @@ class Vehicle:
         return True
 
     def get_local_trust(self, target_id: str) -> float:
-        """Calculate local trust for a specific target vehicle."""
-        alpha, beta = self.interactions.get(target_id, (1.0, 1.0))
-        return compute_trust(alpha, beta)
+        """Calculate local trust for a specific target vehicle based on Model Type."""
+        if self.model_type == 'RTM':
+            # RTM: Simple average table
+            return self.rtm_trust.get(target_id, 0.5)
+
+        elif self.model_type == 'BSED':
+            # BSED: Behavior Score = Correct / Total
+            correct, total = self.interactions.get(target_id, (0.0, 0.0))
+            if total == 0: return 0.5
+            return correct / total
+
+        else:
+            # Bayesian (Default for PROPOSED, BTVR, COBATS, LT_PBFT)
+            alpha, beta = self.interactions.get(target_id, (1.0, 1.0))
+            return compute_trust(alpha, beta)
 
     def record_interaction(self, target_id: str, is_positive: bool):
         """
         Update knowledge about a target vehicle based on an interaction (Section III-A).
         """
-        alpha, beta = self.interactions.get(target_id, (1.0, 1.0))
-        new_alpha, new_beta = update_parameters(alpha, beta, is_positive)
-        self.interactions[target_id] = (new_alpha, new_beta)
-        
-        # Log for sliding window
+        # Log for sliding window (always keep for analysis)
         if target_id not in self.interaction_logs:
             self.interaction_logs[target_id] = []
         self.interaction_logs[target_id].append(is_positive)
-        
+
+        # Update Model specific state
+        if self.model_type == 'RTM':
+            # RTM: trust = (old + outcome)/2
+            # Initialize if not present
+            if target_id not in self.rtm_trust:
+                self.rtm_trust[target_id] = 0.5
+            
+            outcome_val = 1.0 if is_positive else 0.0
+            self.rtm_trust[target_id] = (self.rtm_trust[target_id] + outcome_val) / 2.0
+
+        elif self.model_type == 'BSED':
+            # BSED: update counts
+            c, t = self.interactions.get(target_id, (0.0, 0.0))
+            t += 1.0
+            if is_positive: c += 1.0
+            self.interactions[target_id] = (c, t)
+
+        else:
+            # Bayesian
+            alpha, beta = self.interactions.get(target_id, (1.0, 1.0))
+            new_alpha, new_beta = update_parameters(alpha, beta, is_positive)
+            self.interactions[target_id] = (new_alpha, new_beta)
+
     def get_windowed_local_trust(self, target_id: str, window_size: int = 20) -> float:
         """
         Calculate local trust using only the recent window of interactions.

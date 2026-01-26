@@ -48,6 +48,37 @@ def check_consensus_weighted(committee: List, proposal_score=1.0) -> bool:
         
     approval_mass = 0.0
     
+    for member in committee:
+        # Honest members vote YES (approving a theoretically good proposal)
+        # Malicious members vote NO (trying to stall or they propose bad blocks)
+        # Simplified: Honest = Vote 1, Malicious = Vote 0
+        
+        # Real PBFT: 2/3 majority.
+        # Weighted PBFT: 2/3 of Trust Mass.
+        
+        vote = 1.0 if not member.is_malicious else 0.0
+        approval_mass += vote * member.global_trust_score
+        
+    threshold = (2.0 / 3.0) * total_trust_mass
+    return approval_mass >= threshold
+
+def check_consensus_simple(committee: List) -> bool:
+    """
+    Standard PBFT Consensus (1 Node = 1 Vote).
+    Used for LT-PBFT baseline.
+    Block accepted if Votes > 2/3 of Committee Size.
+    """
+    n = len(committee)
+    if n == 0: return False
+    
+    votes = 0
+    for member in committee:
+        # Honest = Vote 1, Malicious = Vote 0
+        votes += 1 if not member.is_malicious else 0
+        
+    threshold = (2.0 / 3.0) * n
+    return votes >= threshold
+    
     for v in committee:
         # Determine vote behavior
         if v.behavior_type == 'HONEST':
