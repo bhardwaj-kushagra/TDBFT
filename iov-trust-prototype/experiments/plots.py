@@ -405,3 +405,108 @@ def plot_trust_convergence(vehicles, save_path="results/trust_convergence.png"):
     print(f"Plot saved to {save_path}")
     plt.close()
 
+def plot_dag_structure(dag, save_path="results/dag_structure.png"):
+    """
+    Visualizes the DAG structure.
+    Uses a layered layout based on parent-child relationships.
+    """
+    blocks = dag.blocks
+    if not blocks:
+        print("DAG is empty, skipping plot.")
+        return
+
+    # 1. Compute Depths (Layering)
+    depths = {} # block_id -> int
+    
+    # Initialize all depths to 0
+    for bid in blocks:
+        depths[bid] = 0
+        
+    # Relax edges: depth(child) >= depth(parent) + 1
+    # Repeat until convergence (Longest Path)
+    
+    changed = True
+    max_depth = 0
+    loop_count = 0
+    
+    while changed and loop_count < len(blocks) + 2:
+        changed = False
+        loop_count += 1
+        for bid, block in blocks.items():
+            current_depth = depths[bid]
+            max_p_depth = -1
+            
+            # Find max parent depth
+            has_known_parents = False
+            for pid in block.parents:
+                if pid in depths:
+                    has_known_parents = True
+                    max_p_depth = max(max_p_depth, depths[pid])
+            
+            new_depth = 0
+            if has_known_parents:
+                new_depth = max_p_depth + 1
+            
+            if new_depth > current_depth:
+                depths[bid] = new_depth
+                changed = True
+                max_depth = max(max_depth, new_depth)
+    
+    # 2. Assign Y-coordinates (Layout)
+    layers = {}
+    for bid, d in depths.items():
+        if d not in layers: layers[d] = []
+        layers[d].append(bid)
+        
+    y_coords = {}
+    for d, bids in layers.items():
+        n = len(bids)
+        for i, bid in enumerate(bids):
+            y_coords[bid] = i - (n - 1) / 2.0
+            
+    # 3. Plot
+    plt.figure(figsize=(12, 6))
+    ax = plt.gca()
+    
+    # Draw Edges first
+    for bid, block in blocks.items():
+        x1, y1 = depths[bid], y_coords[bid]
+        for pid in block.parents:
+            if pid in depths:
+                x2, y2 = depths[pid], y_coords[pid]
+                ax.plot([x2, x1], [y2, y1], color='gray', alpha=0.5, zorder=1)
+                
+    # Draw Nodes
+    x_vals = [depths[bid] for bid in blocks]
+    y_vals = [y_coords[bid] for bid in blocks]
+    
+    # Color by Validator
+    validators = sorted(list(set(b.validator_id for b in blocks.values())))
+    val_map = {v: i for i, v in enumerate(validators)}
+    colors = [val_map[blocks[bid].validator_id] for bid in blocks]
+    
+    sc = ax.scatter(x_vals, y_vals, c=colors, cmap='tab10', s=300, zorder=2, edgecolors='black')
+    
+    # Labels
+    for bid in blocks:
+        ax.text(depths[bid], y_coords[bid], bid[:4], fontsize=8, ha='center', va='center', color='white', fontweight='bold', zorder=3)
+        
+    plt.title(f"DAG Structure (Height: {max_depth+1}, Blocks: {len(blocks)})")
+    plt.xlabel("Layer (Temporal Depth)")
+    plt.yticks([]) # Hide Y axis
+    plt.grid(False)
+    
+    # Legend for validators
+    import matplotlib.patches as mpatches
+    cmap = plt.get_cmap('tab10')
+    if len(validators) <= 10:
+        patches = [mpatches.Patch(color=cmap(val_map[v]), label=f'Val {v}') for v in validators]
+        plt.legend(handles=patches, loc='upper left', bbox_to_anchor=(1, 1))
+        
+    plt.tight_layout()
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    plt.savefig(save_path)
+    print(f"Plot saved to {save_path}")
+    plt.close()
+
+

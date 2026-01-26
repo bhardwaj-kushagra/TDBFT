@@ -19,6 +19,7 @@ from experiments.plots import (
     plot_comparative_trust, 
     plot_final_trust_distribution,
     plot_trust_convergence,
+    plot_dag_structure,
     normalize_histories
 ) 
 
@@ -264,6 +265,7 @@ def run():
     plot_comparative_trust(sim.model.vehicles)
     plot_final_trust_distribution(sim.model.vehicles)
     plot_trust_convergence(sim.model.vehicles)
+    plot_dag_structure(dags[0], save_path="results/dag1_structure.png")
     
     if target_swing and observer:
         plot_swing_analysis(swing_global_history, swing_local_history)

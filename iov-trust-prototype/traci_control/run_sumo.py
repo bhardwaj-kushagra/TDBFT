@@ -86,17 +86,19 @@ def run_sumo_simulation():
 
     # 2. Start SUMO
     # Look for config in ../sumo/config.sumocfg
-    sumoBinary = "sumo-gui" # or "sumo" for headless
-    # If os is windows, ensure .exe if needed, though 'sumo-gui' usually works in path
+    # options: "sumo-gui" (visual) or "sumo" (faster/headless)
+    sumoBinary = "sumo-gui" 
     
     base_dir = os.path.dirname(os.path.abspath(__file__))
     config_path = os.path.abspath(os.path.join(base_dir, "..", "sumo", "config.sumocfg"))
     
-    sumoCmd = [sumoBinary, "-c", config_path, "--start"]
+    # Auto-start and quit-on-end are crtical to avoid hanging
+    sumoCmd = [sumoBinary, "-c", config_path, "--start", "--quit-on-end"]
     
     print(f"Starting connection to SUMO with {config_path}...")
     try:
         traci.start(sumoCmd)
+        print("TraCI Connected successfully.")
     except Exception as e:
         print(f"Error starting SUMO (check if sumo is in PATH): {e}")
         return
@@ -154,14 +156,13 @@ def run_sumo_simulation():
                             target_v.record_interaction(observer_v.id, is_positive=is_good_a)
 
             # --- Trust Updates ---
-            sim.model.update_global_trust(sync_rsus=True)
-
             # --- Data Collection for Swing Plot ---
             if target_swing:
                 swing_global_history.append(target_swing.global_trust_score)
                 if observer:
                      # Calculate local trust based on observer's history w.r.t target (Windowed)
-                     swing_local_history.append(observer.get_windowed_local_trust(target_swing.id, window_size=20))
+                     # Using window_size=10 per latest fix
+                     swing_local_history.append(observer.get_windowed_local_trust(target_swing.id, window_size=10))
 
             # --- Blockchain Consensus ---
             ranked_vehicles = sim.model.get_ranked_vehicles()
@@ -182,9 +183,13 @@ def run_sumo_simulation():
                     dags[0].merge_with(dags[1])
                     dags[1].merge_with(dags[0])
 
+            # --- Trust Updates ---
+            sim.model.update_global_trust(sync_rsus=True)
+
             step += 1
-            if step % 50 == 0:
-                print(f"SUMO Step {step}/{SUMO_STEPS} | Vehicles: {len(active_sumo_ids)}")
+            # More frequent logging to detect stalls
+            if step % 10 == 0:
+                print(f"SUMO Step {step}/{SUMO_STEPS} | Active Vehicles: {len(active_sumo_ids)}")
 
         traci.close()
         print("SUMO Simulation Finished.")
