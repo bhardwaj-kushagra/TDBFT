@@ -533,3 +533,211 @@ Concrete integration points that preserve architecture separation:
     while keeping VehicleRank unchanged.
 - Replace DAG tip policy with a real tip selection heuristic while keeping validator gating.
 - Add an adversarial voting model where malicious nodes sometimes vote YES on bad proposals (instead of always NO), and measure how the weighted threshold reacts.
+
+---
+
+## 13. Exact Call Graph and Sequence Diagrams (As-Coded)
+
+This section traces the **actual** function-level call order and the data passed between layers.
+
+### 13.1. High-Level Call Graph (Entry Points)
+
+- **Non-SUMO experiments**
+    - `experiments/run_experiment.py`
+        - `run_comparative_study()` (multi-model)
+        - `run_simulation(model_name, steps, num_vehicles, verbose)` (single-model helper)
+
+- **SUMO mobility-driven run**
+    - `traci_control/run_sumo.py`
+        - `run_sumo_simulation()`
+
+### 13.2. Object Graph (Who Owns What State)
+
+- `Simulator`
+    - owns `self.model: TrustModel`
+
+- `TrustModel`
+    - owns `self.vehicles: Dict[str, Vehicle]`
+    - owns `self.rsus: List[RSU]`
+    - owns `self.vehicle_rsu_map: Dict[str, RSU]`
+    - owns `self.step_count: int`
+
+- `Vehicle`
+    - owns local evidence tables: `interactions`, `rtm_trust`, `interaction_logs`
+    - owns `global_trust_score` and `trust_history`
+
+- `RSU`
+    - owns `global_trust_vector: Dict[str, float]`
+
+- `DAG`
+    - owns `blocks: Dict[str, Block]` and `tips: List[str]`
+
+### 13.3. Non-SUMO Sequence (Single Model): `run_simulation(...)`
+
+This is the exact per-step order used in the helper routine inside `experiments/run_experiment.py`.
+
+#### 13.3.1. Sequence Diagram (Mermaid)
+
+```mermaid
+sequenceDiagram
+        participant Driver as experiments/run_experiment.py
+        participant Sim as trust/simulator.py::Simulator
+        participant TM as trust/trust_model.py::TrustModel
+        participant V as trust/vehicle.py::Vehicle
+        participant RSU as trust/rsu.py::RSU
+        participant Val as blockchain/validator.py
+        participant DAG as blockchain/dag.py::DAG
+
+        Driver->>Sim: Simulator(...)
+        Sim->>TM: TrustModel.__init__(...)
+
+        loop for t in range(steps)
+                Driver->>TM: simulate_interaction_step(num_interactions)
+                loop for each interaction
+                        TM->>V: target.perform_action(step_count)
+                        TM->>V: observer.record_interaction(target_id, outcome)
+                        V->>V: update interactions/rtm_trust & interaction_logs
+                end
+
+                Driver->>TM: update_global_trust(sync_rsus=True)
+                loop for each RSU
+                        TM->>RSU: compute_vehiclerank(all_ids, adjacency_reports)
+                        RSU->>RSU: build M; normalize; iterate VehicleRank OR average
+                end
+                TM->>RSU: incorporate_peer_knowledge(peer_vector) (pairwise)
+                TM->>V: set global_trust_score; append trust_history
+
+                Driver->>TM: get_ranked_vehicles()
+                Driver->>Val: select_validators(ranked, top_n=5)
+                Driver->>Val: check_consensus_* (weighted or simple)
+                alt consensus reached
+                        Driver->>DAG: add_block(data={}, validator_id=committee[0].id)
+                end
+        end
+```
+
+#### 13.3.2. Notes on Ordering and Semantics
+
+- In `run_simulation`, **trust is updated before consensus**, so committee selection uses fresh `global_trust_score` values.
+- The appended block payload in `run_simulation` is `{}` (empty dict). The DAG is used here primarily for consensus success rate and structural behavior.
+
+### 13.4. Non-SUMO Sequence (Full Trust Loop): `Simulator.run(...)`
+
+`trust/simulator.py::Simulator.run` uses a simpler pattern:
+
+1. `TrustModel.simulate_interaction_step(interactions_per_step)`
+2. `TrustModel.update_global_trust()`
+
+There is **no blockchain consensus** in this runner; it is a pure trust-evolution driver.
+
+### 13.5. SUMO/TraCI Sequence: `run_sumo_simulation()`
+
+This is the exact order inside `traci_control/run_sumo.py`.
+
+#### 13.5.1. Sequence Diagram (Mermaid)
+
+```mermaid
+sequenceDiagram
+        participant Driver as traci_control/run_sumo.py
+        participant TraCI as traci (SUMO tools)
+        participant Sim as trust/simulator.py::Simulator
+        participant TM as trust/trust_model.py::TrustModel
+        participant V as trust/vehicle.py::Vehicle
+        participant Val as blockchain/validator.py
+        participant DAG0 as blockchain/dag.py::DAG(0)
+        participant DAG1 as blockchain/dag.py::DAG(1)
+
+        Driver->>Sim: Simulator(num_vehicles=20, ...)
+        Driver->>DAG0: DAG()
+        Driver->>DAG1: DAG()
+        Driver->>TraCI: start([sumo-gui, -c config.sumocfg, --start, --quit-on-end])
+
+        loop while step < SUMO_STEPS
+                Driver->>TraCI: simulationStep()
+                Driver->>TraCI: vehicle.getIDList()
+                Driver->>TraCI: vehicle.getPosition(sumo_id) for each active
+                Note over Driver: Build trust-ID positions via sumo_to_trust_map
+
+                loop all pairs (i, j)
+                        Driver->>Driver: if distance < INTERACTION_RANGE and rand < INTERACTION_PROBABILITY
+                        Driver->>V: target.perform_action(step)
+                        Driver->>V: observer.record_interaction(target, outcome)
+                        Driver->>V: observer.perform_action(step)
+                        Driver->>V: target.record_interaction(observer, outcome)
+                end
+
+                Driver->>TM: get_ranked_vehicles()
+                Driver->>Val: select_validators(ranked, top_n=5)
+                Driver->>Val: check_consensus_weighted(committee)
+                alt consensus reached
+                        Driver->>DAG0: add_block(data=snapshot, validator_id=committee[0].id)
+                        Driver->>DAG1: add_block(data=snapshot, validator_id=committee[1].id)
+                        Driver->>DAG0: merge_with(DAG1)
+                        Driver->>DAG1: merge_with(DAG0)
+                end
+
+                Driver->>TM: update_global_trust(sync_rsus=True)
+        end
+
+        Driver->>TraCI: close()
+        Driver->>Driver: plot_trust_evolution / plot_detection_metrics / ...
+```
+
+#### 13.5.2. Critical Ordering Note (Consensus Uses Previous Trust)
+
+In SUMO mode, the loop order is:
+
+1. Build interactions from proximity.
+2. Run committee selection + consensus + DAG append.
+3. Then call `sim.model.update_global_trust(sync_rsus=True)`.
+
+Therefore:
+
+- Committee selection at step $t$ uses `global_trust_score` from **step $t-1$** (or the last computed update).
+- The snapshot payload (`snapshot1 = {v.id: v.global_trust_score for v in ranked_vehicles}`) stored in the DAG reflects the *pre-update* trust vector for that step.
+
+This is not “wrong,” but it must be treated as a **one-step-lagged governance** pipeline.
+
+### 13.6. Exact Data Payloads Written to the DAG
+
+There are two observed payload patterns in the codebase:
+
+- `run_simulation` (comparative helper): `data = {}` (empty), used as an acceptance counter.
+- `run_sumo_simulation`:
+    - `data = snapshot1` where `snapshot1` is a dict `{vehicle_id: global_trust_score}` for all ranked vehicles.
+
+Because blocks have no hash chaining, the DAG acts as a time-stamped audit log of “accepted trust states,” not a tamper-proof ledger.
+
+### 13.7. Internal Control-Flow Trace (One Step, Non-SUMO)
+
+The following is an explicit “single tick” trace suitable for appendix-level documentation:
+
+1. `TrustModel.simulate_interaction_step(k)`
+     - increments `TrustModel.step_count`
+     - repeats k times:
+         - choose `(observer_id, target_id)` uniformly
+         - `is_good = vehicles[target_id].perform_action(step_count)`
+         - `vehicles[observer_id].record_interaction(target_id, is_good)`
+2. `TrustModel.update_global_trust(sync_rsus=True)`
+     - for each RSU:
+         - build `adjacency_reports[reporter_id] = vehicles[reporter_id].interactions`
+         - `RSU.compute_vehiclerank(all_ids, adjacency_reports)`
+     - if sync enabled:
+         - pairwise `RSU.incorporate_peer_knowledge(peer_vector)`
+     - for each vehicle:
+         - `vehicle.global_trust_score = assigned_rsu.get_global_trust(vehicle_id)`
+         - `vehicle.trust_history.append(vehicle.global_trust_score)`
+3. `ranked = TrustModel.get_ranked_vehicles()`
+4. `committee = select_validators(ranked, top_n=K)`
+5. `accepted = check_consensus_* (committee)`
+6. if accepted: `dag.add_block(data=..., validator_id=committee[0].id)`
+
+### 13.8. If You Want “Strict DBFT on DAG” (How to Phrase It)
+
+For writing purposes, you can precisely describe the implemented logic as:
+
+- A **permissioned DAG ledger** where only committee-selected validators may create blocks.
+- A **trust-weighted acceptance rule** (2/3 of trust mass) that decides whether a new DAG node is appended.
+- A **simplified tip policy** (`parents = current_tips; tips = [new_block]`) that avoids uncontrolled branching.
+
+This avoids claiming full DBFT semantics (prepare/commit phases), while still being technically correct about what the code does.
