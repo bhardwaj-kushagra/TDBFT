@@ -16,23 +16,28 @@ The core implementation is located in the [`iov-trust-prototype/`](iov-trust-pro
 ## Quick Start
 
 1. **Navigate to the prototype directory:**
+
    ```bash
    cd iov-trust-prototype
    ```
 
 2. **Install dependencies:**
+
    ```bash
    pip install -r requirements.txt
    ```
 
 3. **Run the standalone experiment (Algorithm Validation):**
+
    ```bash
    python experiments/run_experiment.py
    ```
+
    This runs the simulation using random mobility and interactions to validate the trust model and consensus logic.
 
 4. **Run with SUMO (Realistic Mobility):**
    *Note: Requires SUMO to be installed and `SUMO_HOME` environment variable set.*
+
    ```bash
    python traci_control/run_sumo.py
    ```
