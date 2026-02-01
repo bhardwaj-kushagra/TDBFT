@@ -12,7 +12,7 @@ class Vehicle:
     BEHAVIOR_MALICIOUS = 'MALICIOUS'
     BEHAVIOR_SWING = 'SWING'
 
-    def __init__(self, vehicle_id: str, behavior_type: str = 'HONEST', model_type: str = 'PROPOSED'):
+    def __init__(self, vehicle_id: str, behavior_type: str = 'HONEST', model_type: str = 'PROPOSED', attack_intensity: float = 0.8):
         """
         Initialize a vehicle.
         
@@ -20,10 +20,13 @@ class Vehicle:
             vehicle_id (str): Unique identifier.
             behavior_type (str): 'HONEST', 'MALICIOUS', or 'SWING'.
             model_type (str): Trust model to use.
+            attack_intensity (str): Probability of bad behavior when acting explicitly malicious.
+                                    0.2 = Low, 0.5 = Medium, 0.9 = High.
         """
         self.id = vehicle_id
         self.behavior_type = behavior_type
         self.model_type = model_type
+        self.attack_intensity = attack_intensity
         self.is_malicious = (behavior_type != self.BEHAVIOR_HONEST)
         
         # Local Trust Database: vehicle_id -> (alpha, beta) or other params
@@ -56,20 +59,21 @@ class Vehicle:
             return random.random() < 0.99
             
         elif self.behavior_type == self.BEHAVIOR_MALICIOUS:
-            # Constant Malicious: 30% success rate (to hide slightly), or 0%?
-            # Let's say it drops packets 80% of the time -> 20% success.
-            return random.random() < 0.20
+            # Drop packets with probability = attack_intensity
+            # e.g. Intensity 0.8 => 20% success (cooperation)
+            return random.random() > self.attack_intensity
             
         elif self.behavior_type == self.BEHAVIOR_SWING:
             # Swing Attacker: Oscillates behavior.
-            # Example: Good for 50 steps, Bad for 50 steps
+            # Intensity can affect the bad phase severity
             cycle_length = 50
             is_good_phase = (step_count // cycle_length) % 2 == 0
             
             if is_good_phase:
                 return random.random() < 0.99
             else:
-                return random.random() < 0.10 # Bad phase
+                # In bad phase, behave maliciously with intensity
+                return random.random() > self.attack_intensity
         
         return True
 

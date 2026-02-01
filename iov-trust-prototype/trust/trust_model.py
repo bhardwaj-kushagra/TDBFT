@@ -10,7 +10,7 @@ from .vehicle import Vehicle
 from .rsu import RSU
 
 class TrustModel:
-    def __init__(self, num_vehicles: int, percent_malicious: float = 0.1, percent_swing: float = 0.05, num_rsus: int = 2, model_type: str = 'PROPOSED'):
+    def __init__(self, num_vehicles: int, percent_malicious: float = 0.1, percent_swing: float = 0.05, num_rsus: int = 2, model_type: str = 'PROPOSED', attack_intensity: float = 0.8):
         self.vehicles: Dict[str, Vehicle] = {}
         self.rsus: List[RSU] = [RSU(rsu_id=f"RSU-{i+1:02d}", model_type=model_type) for i in range(num_rsus)]
         
@@ -34,7 +34,7 @@ class TrustModel:
             else:
                 behavior = Vehicle.BEHAVIOR_HONEST
                 
-            self.vehicles[vid] = Vehicle(vid, behavior_type=behavior, model_type=model_type)
+            self.vehicles[vid] = Vehicle(vid, behavior_type=behavior, model_type=model_type, attack_intensity=attack_intensity)
             
             # Assign to RSU
             assigned_rsu = self.rsus[i % len(self.rsus)]

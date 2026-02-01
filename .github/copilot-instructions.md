@@ -226,3 +226,12 @@ Used for most development and debugging.
 
 ```bash
 python experiments/run_experiment.py
+```
+Use the following fixed color and style scheme across all plots:
+
+BTVR      → Blue, dashed line
+BSED      → Green, dotted line
+RTM       → Orange, dash-dot line
+COBATS    → Cyan, dashed line
+LT-PBFT   → Purple, dotted line
+PROPOSED → Red, solid line, linewidth=3, prominent markers
