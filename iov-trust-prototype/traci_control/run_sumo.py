@@ -125,7 +125,7 @@ def run_sumo_simulation():
                 if s_id in sumo_to_trust_map:
                     try:
                         vehicle_positions[sumo_to_trust_map[s_id]] = traci.vehicle.getPosition(s_id)
-                    except:
+                    except Exception:
                         pass
             
             # Pairwise check (O(N^2) but N is small ~20)

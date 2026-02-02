@@ -5,6 +5,7 @@ Integrates Trust Model, Simulator, and Mock Blockchain.
 """
 import sys
 import os
+import numpy as np
 
 # Fix path to allow importing modules from parent directory
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
@@ -23,6 +24,14 @@ from experiments.plots import (
     normalize_histories
 ) 
 
+# Import SUMO runner (added for integration)
+try:
+    from traci_control.run_sumo import run_sumo_simulation
+    SUMO_AVAILABLE = True
+except ImportError:
+    SUMO_AVAILABLE = False
+    print("Warning: Could not import 'traci_control.run_sumo'. Check paths if you want to use SUMO.")
+
 def calculate_statistics(vehicles, dags, partial_dags_count, total_steps):
     """
     Calculates and prints:
@@ -32,7 +41,6 @@ def calculate_statistics(vehicles, dags, partial_dags_count, total_steps):
     D. Trust Convergence Time
     E. Multi-RSU Sync Stats
     """
-    import numpy as np
     
     print("\n" + "="*50)
     print("       EXPERIMENT RESULTS & STATISTICS")
@@ -452,6 +460,17 @@ def run_comparative_study():
     print("="*50)
 
 if __name__ == "__main__":
-    #run() # Original single run
-    run_comparative_study() # New comparative run
+    if SUMO_AVAILABLE:
+        print(">> Mode: SUMO-TraCI Simulation (Primary)")
+        try:
+            run_sumo_simulation()
+        except KeyboardInterrupt:
+            print("\nSimulation Halted by User.")
+        except Exception as e:
+            print(f"\nCRITICAL ERROR in SUMO Simulation: {e}")
+            print("Falling back to Comparative Study...")
+            run_comparative_study()
+    else:
+        print(">> Mode: Synthetic Comparative Study (Fallback)")
+        run_comparative_study()
 

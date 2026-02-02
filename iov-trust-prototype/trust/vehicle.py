@@ -5,12 +5,16 @@ Defines the Vehicle class which maintains its own trust parameters
 towards other vehicles (Local Trust) and its assigned Global Trust.
 """
 from typing import Dict, Tuple
+import random
 from .bayesian import compute_trust, update_parameters
 
 class Vehicle:
     BEHAVIOR_HONEST = 'HONEST'
     BEHAVIOR_MALICIOUS = 'MALICIOUS'
     BEHAVIOR_SWING = 'SWING'
+    
+    # Configuration
+    SWING_CYCLE_LENGTH = 50
 
     def __init__(self, vehicle_id: str, behavior_type: str = 'HONEST', model_type: str = 'PROPOSED', attack_intensity: float = 0.8):
         """
@@ -52,7 +56,6 @@ class Vehicle:
         Determines the outcome of an interaction initiated by another vehicle towards this vehicle.
         Returns True for a cooperative/good interaction, False for malicious/bad.
         """
-        import random
         
         if self.behavior_type == self.BEHAVIOR_HONEST:
             # 99% success rate (accidents happen)
@@ -66,8 +69,7 @@ class Vehicle:
         elif self.behavior_type == self.BEHAVIOR_SWING:
             # Swing Attacker: Oscillates behavior.
             # Intensity can affect the bad phase severity
-            cycle_length = 50
-            is_good_phase = (step_count // cycle_length) % 2 == 0
+            is_good_phase = (step_count // self.SWING_CYCLE_LENGTH) % 2 == 0
             
             if is_good_phase:
                 return random.random() < 0.99

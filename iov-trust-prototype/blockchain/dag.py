@@ -5,6 +5,7 @@ Stores trust updates.
 Not a real blockchain (no PoW/PoS, no hashing).
 """
 from typing import List, Dict
+import random
 from .block import Block
 
 class DAG:
@@ -14,25 +15,33 @@ class DAG:
         # For this prototype, we just link to the last N blocks added.
         self.tips: List[str] = [] 
 
-    def add_block(self, data, validator_id) -> Block:
+    def add_block(self, data, validator_id, n_parents: int = 2) -> Block:
         """
         Creates and adds a new block to the DAG.
-        Links to current 'tips' as parents.
+        Uses Tip Selection Algorithm (random selection of n_parents from current tips).
         """
-        # parents are the current tips. If genesis, empty list.
-        parents = list(self.tips)
+        # Tip Selection: Select n_parents from self.tips
+        available_tips = self.tips
+        if not available_tips:
+            parents = []
+        elif len(available_tips) <= n_parents:
+            parents = list(available_tips)
+        else:
+            parents = random.sample(available_tips, n_parents)
         
         new_block = Block(data, validator_id, parents)
         self.blocks[new_block.id] = new_block
         
-        # In a real DAG, tips update is complex. 
-        # Here: The new block becomes the new tip. 
-        # Optionally keep some old tips if we want width > 1.
-        # For simplicity: New block replaces all tips (linear-ish DAG) or appends.
-        # Let's keep it linear-ish for simplicity unless we want to simulate forks.
-        self.tips = [new_block.id]
+        # Update tips:
+        # Referenced parents are no longer tips (they are now confirmed/covered).
+        # The new block becomes a tip.
+        # Tips that were not selected remain tips (this creates/preserves DAG width).
+        for p_id in parents:
+            if p_id in self.tips:
+                self.tips.remove(p_id)
         
-        # print(f"DEBUG: Block {new_block.id} added by {validator_id}")
+        self.tips.append(new_block.id)
+        
         return new_block
 
     def get_history(self):

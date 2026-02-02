@@ -78,16 +78,3 @@ def check_consensus_simple(committee: List) -> bool:
         
     threshold = (2.0 / 3.0) * n
     return votes >= threshold
-    
-    for v in committee:
-        # Determine vote behavior
-        if v.behavior_type == 'HONEST':
-            vote = 1 # Approve valid block
-        else:
-            vote = 0 # Reject valid block (DoS) OR Approve bad block
-            
-        # Weighted vote
-        approval_mass += v.global_trust_score * vote
-        
-    # 2/3rds majority of TRUST, not nodes
-    return approval_mass >= (2/3 * total_trust_mass)
