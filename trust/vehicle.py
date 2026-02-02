@@ -4,9 +4,11 @@ Vehicle Entity Module.
 Defines the Vehicle class which maintains its own trust parameters
 towards other vehicles (Local Trust) and its assigned Global Trust.
 """
+
 from typing import Dict, Tuple
 import random
-from .bayesian import compute_trust, update_parameters
+from .models.base import TrustStrategy
+from .models.strategies import get_strategy
 
 class Vehicle:
     BEHAVIOR_HONEST = 'HONEST'
@@ -33,12 +35,15 @@ class Vehicle:
         self.attack_intensity = attack_intensity
         self.is_malicious = (behavior_type != self.BEHAVIOR_HONEST)
         
-        # Local Trust Database: vehicle_id -> (alpha, beta) or other params
-        # Bayesian (PROPOSED, BTVR, COBATS, LT_PBFT): (alpha, beta)
-        # BSED: (correct_count, total_count)
+        # Strategy for Trust Logic
+        self.strategy: TrustStrategy = get_strategy(model_type)
+
+        # Storage for different models
+        # Bayesian/BTVR/COBATS: {target_id: (alpha, beta)}
+        # BSED: {target_id: (correct, total)}
         self.interactions: Dict[str, Tuple[float, float]] = {}
         
-        # RTM specific: vehicle_id -> current_trust
+        # RTM specific: {target_id: float}
         self.rtm_trust: Dict[str, float] = {}
 
         # New: Interaction Logs for Sliding Window Analysis
@@ -50,6 +55,7 @@ class Vehicle:
         
         # History of global trust score for plotting
         self.trust_history = [0.5]
+
 
     def perform_action(self, step_count: int) -> bool:
         """
@@ -81,20 +87,7 @@ class Vehicle:
 
     def get_local_trust(self, target_id: str) -> float:
         """Calculate local trust for a specific target vehicle based on Model Type."""
-        if self.model_type == 'RTM':
-            # RTM: Simple average table
-            return self.rtm_trust.get(target_id, 0.5)
-
-        elif self.model_type == 'BSED':
-            # BSED: Behavior Score = Correct / Total
-            correct, total = self.interactions.get(target_id, (0.0, 0.0))
-            if total == 0: return 0.5
-            return correct / total
-
-        else:
-            # Bayesian (Default for PROPOSED, BTVR, COBATS, LT_PBFT)
-            alpha, beta = self.interactions.get(target_id, (1.0, 1.0))
-            return compute_trust(alpha, beta)
+        return self.strategy.get_local_trust(self, target_id)
 
     def record_interaction(self, target_id: str, is_positive: bool):
         """
@@ -105,28 +98,8 @@ class Vehicle:
             self.interaction_logs[target_id] = []
         self.interaction_logs[target_id].append(is_positive)
 
-        # Update Model specific state
-        if self.model_type == 'RTM':
-            # RTM: trust = (old + outcome)/2
-            # Initialize if not present
-            if target_id not in self.rtm_trust:
-                self.rtm_trust[target_id] = 0.5
-            
-            outcome_val = 1.0 if is_positive else 0.0
-            self.rtm_trust[target_id] = (self.rtm_trust[target_id] + outcome_val) / 2.0
-
-        elif self.model_type == 'BSED':
-            # BSED: update counts
-            c, t = self.interactions.get(target_id, (0.0, 0.0))
-            t += 1.0
-            if is_positive: c += 1.0
-            self.interactions[target_id] = (c, t)
-
-        else:
-            # Bayesian
-            alpha, beta = self.interactions.get(target_id, (1.0, 1.0))
-            new_alpha, new_beta = update_parameters(alpha, beta, is_positive)
-            self.interactions[target_id] = (new_alpha, new_beta)
+        # Delegate to Strategy
+        self.strategy.record_interaction(self, target_id, is_positive)
 
     def get_windowed_local_trust(self, target_id: str, window_size: int = 20) -> float:
         """
@@ -156,9 +129,7 @@ class Vehicle:
         Returns the appropriate trust report dictionary based on model type.
         Used by RSU for aggregation.
         """
-        if self.model_type == 'RTM':
-            return self.rtm_trust
-        return self.interactions
+        return self.strategy.get_trust_reports(self)
 
     def __repr__(self):
         return f"<Vehicle {self.id} | Malicious: {self.is_malicious} | Trust: {self.global_trust_score:.2f}>"

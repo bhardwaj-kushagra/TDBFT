@@ -1,3 +1,4 @@
+<!-- markdownlint-disable MD004 MD007 MD022 MD030 MD031 MD032 -->
 # Technical Implementation Specification: IoV Trust & Consensus Prototype
 
 **Version:** 1.0.0  

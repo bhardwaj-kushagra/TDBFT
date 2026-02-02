@@ -5,6 +5,12 @@ import matplotlib.pyplot as plt
 import numpy as np
 import os
 
+from experiments.config import (
+    MODELS, COLORS, LINE_STYLES, LINE_WIDTHS, get_style, RESULTS_DIR
+)
+from experiments.benchmark import run_single_simulation
+from trust.simulator import Simulator 
+
 def normalize_histories(vehicles):
     """
     Normalizes trust scores per time step using Min-Max normalization.
@@ -509,4 +515,226 @@ def plot_dag_structure(dag, save_path="results/dag_structure.png"):
     print(f"Plot saved to {save_path}")
     plt.close()
 
+
+def generate_graph_1(out_dir="results"):
+    """Graph 1: IoV Traffic (Interactions) vs Malicious Detected"""
+    print("Generating Graph 1...")
+    steps = 80
+    interactions_per_step = 50
+
+    plt.figure(figsize=(10, 6))
+
+    for model in MODELS:
+        res = run_single_simulation(
+            model,
+            steps=steps,
+            interactions_per_step=interactions_per_step,
+            percent_malicious=0.1,
+        )
+
+        # X-axis: Interactions (Step * IntPerStep)
+        x_axis = [i * interactions_per_step for i in range(1, steps + 1)]
+        y_axis = res["detected_history"]
+
+        plt.plot(x_axis, y_axis, **get_style(model))
+
+    plt.title("IoV Traffic vs Malicious Vehicle Behavior")
+    plt.xlabel("Total Number of Interactions")
+    plt.ylabel("Total Number of Malicious Vehicles Detected")
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    plt.savefig(f"{out_dir}/graph1_traffic_vs_detection.png")
+    plt.close()
+
+def generate_graph_2(out_dir="results"):
+    """Graph 2: Interactions vs Malicious Vehicles (10%, 20%, 30%)"""
+    print("Generating Graph 2...")
+    ratios = [0.1, 0.2, 0.3]
+    
+    fig, axes = plt.subplots(1, 3, figsize=(18, 5), sharey=True)
+    steps = 60
+    
+    for i, ratio in enumerate(ratios):
+        ax = axes[i]
+        for model in MODELS:
+            res = run_single_simulation(model, steps=steps, percent_malicious=ratio, interactions_per_step=50)
+            x_axis = [k * 50 for k in range(1, steps + 1)]
+            y_axis = res['detected_history']
+            
+            style = get_style(model)
+            ax.plot(x_axis, y_axis, **style)
+            
+        ax.set_title(f"Attacker Ratio: {int(ratio*100)}%")
+        ax.set_xlabel("Interactions")
+        if i == 0:
+            ax.set_ylabel("Detected Malicious Vehicles")
+        ax.grid(True, alpha=0.3)
+
+    handles, labels = axes[0].get_legend_handles_labels()
+    fig.legend(handles, labels, loc='center right')
+    plt.tight_layout(rect=(0, 0, 0.9, 1))
+    plt.savefig(f"{out_dir}/graph2_robustness_scenarios.png")
+    plt.close()
+
+def generate_graph_3_and_4(out_dir="results"):
+    """Graph 3 & 4: TPS and Average Throughput vs Network Size"""
+    print("Generating Graph 3 & 4...")
+    sizes = [10, 20, 30, 40, 50, 60]
+    results_tps = {m: [] for m in MODELS}
+    steps = 50
+    
+    for N in sizes:
+        for model in MODELS:
+            res = run_single_simulation(model, num_vehicles=N, steps=steps)
+            success_count = res['consensus_success']
+            
+            # Theoretical Complexity Penalty
+            if model == 'LT_PBFT':
+                overhead = (N ** 2) / 20.0 # O(N^2)
+            elif model == 'COBATS':
+                overhead = (N * 2) / 10.0
+            elif model == 'PROPOSED':
+                overhead = (N) / 10.0 # O(N)
+            else:
+                 overhead = (N * 1.5) / 10.0
+            
+            raw_throughput = success_count / steps 
+            tps = (raw_throughput * 1000) / (10 + overhead)
+            results_tps[model].append(tps)
+            
+    # Graph 3: Line Plot
+    plt.figure(figsize=(10, 6))
+    for model in MODELS:
+        plt.plot(sizes, results_tps[model], **get_style(model))
+    plt.title("Throughput (TPS) vs Network Size")
+    plt.xlabel("Network Size (Number of Vehicles)")
+    plt.ylabel("Throughput (TPS)")
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    plt.savefig(f"{out_dir}/graph3_throughput_line.png")
+    plt.close()
+    
+    # Graph 4: Bar Chart
+    plt.figure(figsize=(12, 6))
+    x = np.arange(len(sizes))
+    width = 0.12 
+    for i, model in enumerate(MODELS):
+        offset = (i - len(MODELS)/2) * width + width/2
+        c = COLORS.get(model, 'gray')
+        plt.bar(x + offset, results_tps[model], width, label=model, color=c)
+    plt.title("Average Throughput vs Network Size")
+    plt.xlabel("Network Size")
+    plt.ylabel("Average Throughput (TPS)")
+    plt.xticks(x, [str(size) for size in sizes])
+    plt.legend()
+    plt.grid(axis='y', alpha=0.3)
+    plt.savefig(f"{out_dir}/graph4_throughput_bar.png")
+    plt.close()
+
+def generate_graph_5(out_dir="results"):
+    """Graph 5: Swing Attack Success vs Intensity"""
+    print("Generating Graph 5...")
+    intensities = [0.2, 0.5, 0.8, 0.95]
+    labels_x = ['Low', 'Medium', 'High', 'Very High']
+    res_success = {m: [] for m in MODELS}
+    
+    for intensity in intensities:
+        for model in MODELS:
+            sim_res = run_single_simulation(model, percent_malicious=0.0, percent_swing=0.2, 
+                                            attack_intensity=intensity, steps=80)
+            total_rounds = 80
+            failures = total_rounds - sim_res['consensus_success']
+            rate = (failures / total_rounds) * 100
+            res_success[model].append(rate)
+
+    plt.figure(figsize=(10, 6))
+    for model in MODELS:
+        plt.plot(labels_x, res_success[model], **get_style(model))
+    plt.title("Success Rate of Swing Attacks vs Attack Intensity")
+    plt.xlabel("Attack Intensity")
+    plt.ylabel("Attack Success Rate (%)")
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    plt.savefig(f"{out_dir}/graph5_swing_attack_success.png")
+    plt.close()
+    return intensities, labels_x
+
+def generate_graph_6(intensities, labels_x, out_dir="results"):
+    """Graph 6: Internal Attack Success vs Intensity"""
+    print("Generating Graph 6...")
+    res_success = {m: [] for m in MODELS}
+    
+    for intensity in intensities:
+        for model in MODELS:
+            sim_res = run_single_simulation(model, percent_malicious=0.2, percent_swing=0.0,
+                                            attack_intensity=intensity, steps=80)
+            total = 80
+            failures = total - sim_res['consensus_success']
+            rate = (failures / total) * 100
+            res_success[model].append(rate)
+            
+    plt.figure(figsize=(12, 6))
+    x = np.arange(len(labels_x))
+    width = 0.12
+    for i, model in enumerate(MODELS):
+        offset = (i - len(MODELS)/2) * width + width/2
+        c = COLORS.get(model, 'gray')
+        plt.bar(x + offset, res_success[model], width, label=model, color=c)
+    plt.title("Internal Attack Challenge: Success Rate vs Intensity")
+    plt.xlabel("Attack Intensity")
+    plt.ylabel("Attack Success Rate (%)")
+    plt.xticks(x, labels_x)
+    plt.legend()
+    plt.grid(axis='y', alpha=0.3)
+    plt.savefig(f"{out_dir}/graph6_internal_attack_bar.png")
+    plt.close()
+
+def generate_graph_7(out_dir="results"):
+    """Graph 7: Trust Convergence Stability"""
+    print("Generating Graph 7...")
+    steps = 100
+    plt.figure(figsize=(10, 6))
+    
+    for model in MODELS:
+        sim = Simulator(model_type=model, num_vehicles=50, percent_malicious=0.1)
+        history_ranks = [] 
+        
+        for t in range(steps):
+             sim.model.simulate_interaction_step(25)
+             sim.model.update_global_trust(sync_rsus=True)
+             
+             vehicles = sim.model.vehicles
+             scores = [(v.id, v.global_trust_score) for v in vehicles.values()]
+             scores.sort(key=lambda x: x[1], reverse=True)
+             
+             rank_map = {vid: i for i, (vid, score) in enumerate(scores)}
+             history_ranks.append(rank_map)
+             
+        threshold = 5 
+        y_axis = [0.0] 
+        
+        for t in range(1, steps):
+            prev = history_ranks[t-1]
+            curr = history_ranks[t]
+            stable_count = 0
+            for vid in prev:
+                change = abs(prev[vid] - curr[vid])
+                if change <= threshold:
+                    stable_count += 1
+            y_axis.append(stable_count / 50.0)
+            
+        plt.plot(range(steps), y_axis, **get_style(model))
+
+    plt.title("Trust/Rank Convergence Stability")
+    plt.xlabel("Simulation Steps")
+    plt.ylabel("Fraction of Nodes with Stable Rank")
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    plt.savefig(f"{out_dir}/graph7_convergence_stability.png")
+    plt.close()
+
+def run_paper_suite():
+    """Run all paper graph generations."""
+    out_dir = "results"
+    os.makedirs(out_dir, exist_ok=True)
 
