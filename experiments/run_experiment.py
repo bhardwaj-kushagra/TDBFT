@@ -17,7 +17,12 @@ import argparse
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
 from trust.simulator import Simulator
-from blockchain.validator import select_validators, check_consensus_weighted, select_validators
+from blockchain.consensus_manager import ConsensusManager
+from experiments.config import (
+    MODELS, COLORS, LINE_STYLES, LINE_WIDTHS, get_style,
+    DEFAULT_STEPS, INTERACTIONS_PER_STEP_RATIO, DETECTION_THRESHOLD,
+    RESULTS_DIR
+)
 from experiments.plots import (
     plot_trust_evolution, 
     plot_detection_metrics, 
@@ -38,41 +43,15 @@ except ImportError:
 # ==========================================
 # CONFIGURATION & CONSTANTS
 # ==========================================
-MODELS = ['BTVR', 'BSED', 'RTM', 'COBATS', 'LT_PBFT', 'PROPOSED']
-COLORS = {
-    'BTVR': 'blue',
-    'BSED': 'green',
-    'RTM': 'orange',
-    'COBATS': 'cyan',
-    'LT_PBFT': 'purple',
-    'PROPOSED': 'red'
-}
-LINE_STYLES = {
-    'BTVR': '--',
-    'BSED': '--',
-    'RTM': '--',
-    'COBATS': '--',
-    'LT_PBFT': '--',
-    'PROPOSED': '-' # Solid and Thick
-}
-LINE_WIDTHS = {
-    'PROPOSED': 3,
-    'DEFAULT': 1.5
-}
+# (Moved to experiments.config)
+# See imports above.
 
-def get_style(model):
-    return {
-        'color': COLORS.get(model, 'black'),
-        'linestyle': LINE_STYLES.get(model, '-'),
-        'linewidth': LINE_WIDTHS.get(model, LINE_WIDTHS['DEFAULT']),
-        'label': model
-    }
 
 # ==========================================
 # SIMULATION ENGINE
 # ==========================================
 def run_single_simulation(model_name, num_vehicles=50, percent_malicious=0.1, percent_swing=0.0, 
-                          steps=100, attack_intensity=0.8, interactions_per_step=None):
+                          steps=DEFAULT_STEPS, attack_intensity=0.8, interactions_per_step=None):
     """
     Runs one instance of the simulation with configurable parameters.
     Returns:
@@ -82,7 +61,7 @@ def run_single_simulation(model_name, num_vehicles=50, percent_malicious=0.1, pe
        - vehicles: final vehicle states
     """
     if interactions_per_step is None:
-        interactions_per_step = int(num_vehicles * 0.5)
+        interactions_per_step = int(num_vehicles * INTERACTIONS_PER_STEP_RATIO)
 
     sim = Simulator(num_vehicles=num_vehicles, 
                     percent_malicious=percent_malicious, 
@@ -91,10 +70,12 @@ def run_single_simulation(model_name, num_vehicles=50, percent_malicious=0.1, pe
                     model_type=model_name,
                     attack_intensity=attack_intensity)
     
+    # Initialize Consensus Manager
+    consensus_mgr = ConsensusManager(model_name, sim.model.vehicles)
+
     detected_history = []
     mal_ids = [v.id for v in sim.model.vehicles.values() if v.is_malicious]
     
-    consensus_success = 0
     total_interactions = 0
     
     for t in range(steps):
@@ -118,31 +99,18 @@ def run_single_simulation(model_name, num_vehicles=50, percent_malicious=0.1, pe
             score = vehicles[vid].global_trust_score
             norm_score = (score - min_v) / range_v if max_v > min_v else 0.5
             
-            # Threshold: < 0.35 (Lower 35% of trust range)
-            if norm_score < 0.35: 
+            # Threshold Check from Config
+            if norm_score < DETECTION_THRESHOLD: 
                 current_detected_count += 1
         
         detected_history.append(current_detected_count)
         
-        # 4. Consensus Check
-        ranked_vehicles = sim.model.get_ranked_vehicles()
-        committee = select_validators(ranked_vehicles, top_n=5)
-        
-        if committee:
-            passed = False
-            if model_name in ['LT_PBFT', 'COBATS']:
-                # Simple Majority (simulated check)
-                from blockchain.validator import check_consensus_simple
-                passed = check_consensus_simple(committee) 
-            else:
-                passed = check_consensus_weighted(committee) 
-            
-            if passed: 
-                consensus_success += 1
+        # 4. Consensus Check via Manager
+        consensus_mgr.attempt_consensus(step=t)
     
     return {
         'detected_history': detected_history,
-        'consensus_success': consensus_success,
+        'consensus_success': consensus_mgr.consensus_success_count,
         'total_interactions': total_interactions,
         'vehicles': sim.model.vehicles
     }
