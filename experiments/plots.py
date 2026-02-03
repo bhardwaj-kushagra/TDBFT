@@ -662,6 +662,8 @@ def generate_graph_3_and_4(out_dir="results"):
                 # Committee size is fixed (e.g., 5 or 10), so N doesn't impact consensus time much
                 # Just trust aggregation time O(N), but consensus is O(1)
                 lat = base_latency + (2 * N) + 50 # Very flat curve
+            else:
+                lat = base_latency + (10 * N) # Fallback for unknown models
             
             results_latency[model].append(lat)
 

@@ -18,6 +18,13 @@ import argparse
 # Allow imports from parent directory
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
+try:
+    from experiments.run_sumo_experiment import run_sumo_simulation, SUMO_AVAILABLE
+except ImportError:
+    SUMO_AVAILABLE = False
+    def run_sumo_simulation(compare=False):
+        print("SUMO modules not found.")
+
 from experiments.config import MODELS, RESULTS_DIR
 from experiments.benchmark import run_single_simulation
 from experiments.plots import (
@@ -27,12 +34,7 @@ from experiments.plots import (
     plot_final_trust_distribution
 )
 
-# Optional SUMO import
-try:
-    from experiments.run_sumo_experiment import run_sumo_simulation
-    SUMO_AVAILABLE = True
-except ImportError:
-    SUMO_AVAILABLE = False
+
 
 
 def run_default_demo():

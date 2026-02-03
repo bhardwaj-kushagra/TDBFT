@@ -28,9 +28,17 @@ else:
 
 try:
     import traci
+    import traci.constants as tc
+    SUMO_AVAILABLE = True
 except ImportError:
     # sys.exit("Could not import traci. Check SUMO_HOME and python path.")
     traci = None
+    # Create a dummy class to satisfy static analysis when SUMO is missing
+    class MockConstants:
+        CMD_GET_VEHICLE_VARIABLE = 0
+        VAR_POSITION = 0
+    tc = MockConstants()
+    SUMO_AVAILABLE = False
 
 # Fix path to allow importing modules from parent directory
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
@@ -119,9 +127,9 @@ def run_sumo_logic(model_name, label=""):
                         sumo_to_trust_map[s_id] = t_id
                         traci.vehicle.subscribeContext(
                             s_id, 
-                            traci.constants.CMD_GET_VEHICLE_VARIABLE, 
+                            tc.CMD_GET_VEHICLE_VARIABLE, 
                             INTERACTION_RANGE, 
-                            [traci.constants.VAR_POSITION]
+                            [tc.VAR_POSITION]
                         )
 
             # --- Simulate Interactions ---
