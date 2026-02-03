@@ -39,7 +39,8 @@ from trust.simulator import Simulator
 from blockchain.consensus_manager import ConsensusManager
 from experiments.config import (
     SUMO_CONFIG_PATH, SUMO_STEPS, INTERACTION_RANGE, INTERACTION_PROBABILITY,
-    SUMO_VEHICLE_COUNT, DEFAULT_MALICIOUS_PERCENT, DEFAULT_SWING_PERCENT
+    SUMO_VEHICLE_COUNT, DEFAULT_MALICIOUS_PERCENT, DEFAULT_SWING_PERCENT,
+    MODELS, RESULTS_DIR
 )
 from experiments.plots import (
     plot_trust_evolution, 
@@ -48,58 +49,62 @@ from experiments.plots import (
     plot_comparative_trust, 
     plot_final_trust_distribution
 )
+import matplotlib.pyplot as plt
 
-def run_sumo_simulation():
+def run_sumo_logic(model_name, label=""):
     """
-    Main loop for SUMO-driven simulation.
+    Executes a SINGLE instance of SUMO simulation for a specific model.
+    Returns the final vehicle state and detection history.
     """
-    print("Initializing SUMO Experiment...")
+    print(f"\n--- Starting SUMO Instance: {model_name} ---")
     
     if traci is None:
         print("Error: TraCI not imported. Is SUMO_HOME set?")
-        return
+        return None
 
     # 1. Setup Trust Model
     sim = Simulator(num_vehicles=SUMO_VEHICLE_COUNT, 
                     percent_malicious=DEFAULT_MALICIOUS_PERCENT, 
                     percent_swing=DEFAULT_SWING_PERCENT, 
-                    num_rsus=2)
+                    num_rsus=2,
+                    model_type=model_name)
     
-    # Initialize Consensus Manager (replaces manual DAG/Validator logic)
-    consensus_mgr = ConsensusManager('PROPOSED', sim.model.vehicles)
+    # Initialize Consensus Manager
+    consensus_mgr = ConsensusManager(model_name, sim.model.vehicles)
     
     # Mapping SUMO ID -> TrustModel ID (e.g., 'veh0' -> 'V000')
     sumo_to_trust_map = {}
     available_trust_ids = list(sim.model.vehicles.keys())
-    available_trust_ids.sort() # Ensure deterministic order V000, V001...
+    available_trust_ids.sort() 
     
     # Tracking for plots
     swing_candidates = [v for v in sim.model.vehicles.values() if v.behavior_type == 'SWING']
     honest_candidates = [v for v in sim.model.vehicles.values() if v.behavior_type == 'HONEST']
     target_swing = swing_candidates[0] if swing_candidates else None
     observer = honest_candidates[0] if honest_candidates else None
+    
     swing_global_history = []
     swing_local_history = []
     
+    # Metric tracking for comparison
+    detection_history = []
+    mal_ids = [v.id for v in sim.model.vehicles.values() if v.is_malicious]
+
     if target_swing:
         print(f"Tracking Swing Attacker: {target_swing.id}")
 
     # 2. Start SUMO
-    sumoBinary = "sumo-gui" 
-    
-    # Auto-start and quit-on-end are crtical to avoid hanging
+    sumoBinary = "sumo-gui"
     sumoCmd = [sumoBinary, "-c", SUMO_CONFIG_PATH, "--start", "--quit-on-end"]
     
-    print(f"Starting connection to SUMO with {SUMO_CONFIG_PATH}...")
     try:
         traci.start(sumoCmd)
         print("TraCI Connected successfully.")
     except Exception as e:
         print(f"Error starting SUMO (check if sumo is in PATH): {e}")
-        return
+        return None
 
     step = 0
-    
     try:
         while step < SUMO_STEPS:
             traci.simulationStep()
@@ -112,10 +117,6 @@ def run_sumo_simulation():
                     if available_trust_ids:
                         t_id = available_trust_ids.pop(0)
                         sumo_to_trust_map[s_id] = t_id
-                        
-                        # Optimization: Subscribe to context (Neighbors within Range)
-                        # flags=0 to get default aggregation, but we just need IDs mainly
-                        # VAR_POSITION tells SUMO what to return (we don't strictly use it if we trust the subscription)
                         traci.vehicle.subscribeContext(
                             s_id, 
                             traci.constants.CMD_GET_VEHICLE_VARIABLE, 
@@ -123,83 +124,114 @@ def run_sumo_simulation():
                             [traci.constants.VAR_POSITION]
                         )
 
-            # --- Simulate Interactions via Context Subscription (O(N*k)) ---
-            processed_pairs = set() # To avoid double processing A-B and B-A
-            
+            # --- Simulate Interactions ---
+            processed_pairs = set()
             for s_id in active_sumo_ids:
                 if s_id not in sumo_to_trust_map: continue
-                
-                # Get neighbors from subscription
-                # Returns dict: {neighbor_id: {VAR_POSITION: ...}}
                 neighbors = traci.vehicle.getContextSubscriptionResults(s_id)
                 
                 if neighbors:
                     trust_id_a = sumo_to_trust_map[s_id]
-                    
                     for neighbor_id in neighbors:
-                        if neighbor_id == s_id or neighbor_id not in sumo_to_trust_map:
-                            continue
-                            
+                        if neighbor_id == s_id or neighbor_id not in sumo_to_trust_map: continue
                         trust_id_b = sumo_to_trust_map[neighbor_id]
-                        
-                        # Sort pair to ensure uniqueness for current step
                         pair_key = tuple(sorted((trust_id_a, trust_id_b)))
-                        
-                        if pair_key in processed_pairs:
-                            continue
-                            
+                        if pair_key in processed_pairs: continue
                         processed_pairs.add(pair_key)
                         
-                        # Interaction Logic
                         if random.random() < INTERACTION_PROBABILITY:
                             observer_v = sim.model.vehicles[trust_id_a]
                             target_v = sim.model.vehicles[trust_id_b]
-                            
-                            # Bidirectional Interaction
-                            is_good_b = target_v.perform_action(sim.model.step_count)
-                            observer_v.record_interaction(target_v.id, is_positive=is_good_b)
-                            
-                            is_good_a = observer_v.perform_action(sim.model.step_count)
-                            target_v.record_interaction(observer_v.id, is_positive=is_good_a)
+                            # Interactions
+                            observer_v.record_interaction(target_v.id, target_v.perform_action(step))
+                            target_v.record_interaction(observer_v.id, observer_v.perform_action(step))
 
-            # --- Trust Updates ---
-            # --- Data Collection for Swing Plot ---
+            # --- Logic Updates ---
             if target_swing:
                 swing_global_history.append(target_swing.global_trust_score)
                 if observer:
-                     # Calculate local trust based on observer's history w.r.t target (Windowed)
                      swing_local_history.append(observer.get_windowed_local_trust(target_swing.id, window_size=10))
 
-            # --- Blockchain Consensus (via Manager) ---
             consensus_mgr.attempt_consensus(step)
-
-            # --- Trust Updates ---
             sim.model.update_global_trust(sync_rsus=True)
+            
+            # Record Detection Count
+            # Simple threshold check for the plot
+            detected_count = 0
+            for vid in mal_ids:
+                 score = sim.model.vehicles[vid].global_trust_score
+                 # Rough threshold for quick metric, actual logic is in plots
+                 if score < 0.4: 
+                     detected_count += 1
+            detection_history.append(detected_count)
 
             step += 1
-            # More frequent logging to detect stalls
             if step % 50 == 0:
                 print(f"SUMO Step {step}/{SUMO_STEPS} | Active Vehicles: {len(active_sumo_ids)}")
 
         traci.close()
-        print("SUMO Simulation Finished.")
+        print(f"SUMO Simulation Finished for {model_name}.")
         
-        # --- Plotting ---
-        print("Generating Plots...")
-        plot_trust_evolution(sim.model.vehicles)
-        plot_detection_metrics(sim.model.vehicles)
-        plot_comparative_trust(sim.model.vehicles)
-        plot_final_trust_distribution(sim.model.vehicles)
-        
-        if target_swing and observer:
-            plot_swing_analysis(swing_global_history, swing_local_history)
+        return {
+            'model': model_name,
+            'vehicles': sim.model.vehicles,
+            'detection_history': detection_history,
+            'swing_history': (swing_global_history, swing_local_history) if target_swing else None
+        }
 
     except Exception as e:
         print(f"Error during simulation: {e}")
-        try:
-            traci.close()
-        except:
-            pass
+        try: traci.close()
+        except: pass
+        return None
+
+def run_sumo_simulation(compare=False):
+    """
+    Entry point for SUMO mode.
+    If compare=True, runs all models sequentially.
+    """
+    if not compare:
+        # --- SINGLE MODE ---
+        print(">> Running Single SUMO Instance (model='PROPOSED')")
+        result = run_sumo_logic('PROPOSED')
+        if result:
+            print("Generating Single Run Plots...")
+            plot_trust_evolution(result['vehicles'])
+            plot_detection_metrics(result['vehicles'])
+            plot_final_trust_distribution(result['vehicles'])
+            
+            if result['swing_history']:
+                gh, lh = result['swing_history']
+                plot_swing_analysis(gh, lh)
+    
+    else:
+        # --- COMPARE MODE ---
+        print(f">> Running Comparative SUMO Suite (Models: {MODELS})")
+        results = {}
+        
+        for model in MODELS:
+            res = run_sumo_logic(model)
+            if res:
+                results[model] = res
+        
+        # Comparative Plotting
+        if results:
+            print("Generating Comparative SUMO Plots...")
+            plt.figure(figsize=(10, 6))
+            for model, data in results.items():
+                plt.plot(data['detection_history'], label=model)
+                
+            plt.title("SUMO: Malicious Detection Over Time by Model")
+            plt.xlabel("Simulation Step")
+            plt.ylabel("Detected Count")
+            plt.legend()
+            plt.grid(True, alpha=0.3)
+            
+            os.makedirs(RESULTS_DIR, exist_ok=True)
+            outfile = os.path.join(RESULTS_DIR, "sumo_comparative_detection.png")
+            plt.savefig(outfile)
+            plt.close()
+            print(f"Saved {outfile}")
 
 if __name__ == "__main__":
     run_sumo_simulation()
