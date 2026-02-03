@@ -13,15 +13,20 @@ This repository acts as a simulation sandbox for the **VehicleRank** and **Trust
 ```text
 ./
 ├── trust/              # CORE ALGORITHMS
+│   ├── models/         # STRATEGY PATTERN (New)
+│   │   ├── strategies.py # ProposedStrategy, BTVRStrategy, etc.
+│   │   └── base.py       # TrustStrategy Interface
 │   ├── bayesian.py     # BayesTrust (Eq III-A)
-│   ├── rsu.py          # VehicleRank (Eq III-C)
+│   ├── rsu.py          # Context for Strategies
 │   ├── vehicle.py      # Node state & behavior
 │   └── trust_model.py  # Orchestrator
 ├── blockchain/         # MOCKED LEDGER
-│   ├── dag.py          # Graph data structure
+│   ├── dag.py          # Graph data structure (with TCW)
+│   ├── consensus_manager.py # Bridge between Trust & DAG
 │   └── validator.py    # Committee & Consensus (Eq IV-A/B)
 ├── experiments/        # RUNTIME
-│   ├── run_experiment.py # Main entry point
+│   ├── run_experiment.py # Main entry point (CLI)
+│   ├── run_sumo_experiment.py # TraCI integration
 │   └── plots.py        # Matplotlib visualization
 └── results/            # OUTPUT
 ```
@@ -30,7 +35,15 @@ This repository acts as a simulation sandbox for the **VehicleRank** and **Trust
 
 ## 2. Code Walkthrough
 
-### A. `trust/bayesian.py`
+### A. `trust/models/strategies.py` (The Heart)
+
+**Implements:** Section III (Global Trust Logic).
+
+*   **`ProposedStrategy`**: Implements the full **VehicleRank** algorithm (Power Iteration).
+*   **`BTVRStrategy`**: Implements the baseline Beta-based averaging.
+*   **Usage**: The system picks the strategy at runtime using the Factory pattern in `trust/models/__init__.py`.
+
+### B. `trust/bayesian.py`
 
 **Implements:** Section III-A (Local Trust Formulation).
 
@@ -38,22 +51,12 @@ This repository acts as a simulation sandbox for the **VehicleRank** and **Trust
 * **Logic**: Returns (alpha / (alpha + beta)).
 * **Usage**: Called by RSUs to convert raw interaction counts $(y, n)$ into basic probability scores $m_{ij}$.
 
-### B. `trust/rsu.py`
+### C. `trust/rsu.py`
 
-**Implements:** Section III-C (VehicleRank).
+**Implements:** Section III-C (Context for VehicleRank).
 
-* **Class**: `RSU`
-* **Key Method**: `compute_vehiclerank(all_ids, reports)`
-* **Algorithm**:
-  1. **Build Matrix**: Converts local trust reports into an $N \times N$ matrix.
-  2. **Normalize**: Normalizes rows so they sum to 1.
-  3. **Power Iteration**:
-
-     ```python
-     t_new = alpha * dot(t, S) + (1-alpha) * teleport
-     ```
-
-  4. Runs until `norm(t_new - t) < 1e-6`.
+*   **Class**: `RSU`
+*   **Role**: Acts as the Context in the Strategy Pattern. It holds the `strategy` instance and delegates the heavy lifting via `self.strategy.compute_global_trust(...)`.
 
 ### `trust/vehicle.py`
 
@@ -87,15 +90,15 @@ This repository acts as a simulation sandbox for the **VehicleRank** and **Trust
    * **Commit**: If consensus passes, blocks are added to DAG.
    * **Merge**: Multi-region DAGs (RSU 1 & RSU 2) sync.
 
----
+--- & CLI.
 
-## 3. How to Run
-
-### Requirements
-
-* Python 3.8+
-* `numpy`
-* `matplotlib`
+*   **Commands**:
+    *   `python ... -s`: Run with SUMO.
+    *   `python ... -c`: Run comparative suite.
+*   **Flow**:
+    1.  Initializes `Simulator` (which builds Logic).
+    2.  Initializes `ConsensusManager` (which builds DAG).
+    3.  Loops through steps -> Interactions -> Trust Updates -> Block Creation
 
 ### command
 

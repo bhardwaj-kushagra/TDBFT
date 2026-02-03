@@ -75,51 +75,50 @@ Here is a guide to the files in the project root:
 
 ### 📂 `trust/` (The Brains)
 
+- **`models/strategies.py`**: **(New)** logic core. Separate classes for `Proposed` vs `Baseline` models.
 - **`bayesian.py`**: Pure math functions. specific implementations of the trust formula.
-- **`vehicle.py`**: The `Vehicle` class. It stores its own history (`interactions`) and decides how to behave (Honest vs. Malicious).
-- **`rsu.py`**: The central authority (in this context) that gathers reports from all vehicles to form a "Global Opinion".
-- **`trust_model.py`**: The manager. It creates the fleet of vehicles and orchestrates the daily cycle of "Interact -> Update -> Report".
+- **`vehicle.py`**: The `Vehicle` class. It stores its own history (`interactions`) and decides how to behave.
+- **`rsu.py`**: The central aggregator. Now minimal; delegates math to strategies.
 
 ### 📂 `blockchain/` (The Ledger)
 
-- **`dag.py`**: A simple Python list/dict structure acting as our decentralized ledger.
-- **`block.py`**: Defines what a "Block" looks like (ID, Timestamp, Data, Parent Hash).
-- **`validator.py`**: Logic to sort vehicles found in `trust_model` and pick the winners to be validators.
+- **`dag.py`**: A **Trust-Weighted** DAG. Stores blocks and tracks **Cumulative Weight (TCW)**.
+- **`consensus_manager.py`**: Managing module that links Trust scores to DAG construction.
+- **`block.py`**: Defines "Block" with `issuer_trust` and `tcw`.
 
 ### 📂 `experiments/` (The Laboratory)
 
-- **`run_experiment.py`**: **Run this file.** It loops through simulation steps, calls the trust model, selects validators, and writes to the DAG.
-- **`plots.py`**: Utilities to draw the "Trust Evolution" and "Detection Metrics" graphs found in results.
+- **`run_experiment.py`**: **Run this file.** Supports `--sumo` and `--compare` flags.
+- **`run_sumo_experiment.py`**: SUMO TraCI integration logic.
+- **`plots.py`**: Utilities to draw the "Trust Evolution" and "Detection Metrics" graphs.
 
 ---
 
 ## 4. Execution Guide (Beginner Friendly)
 
-Follow these steps to run the simulation on your Windows machine.
-
 ### Prerequisites
 
-- **Python 3.x** installed.
-- **VS Code** (which you are using).
+- **Python 3.8+**
+- **Eclipse SUMO** (optional, for Mobility mode)
 
 ### Step 1: Install Dependencies
 
-Open your terminal (PowerShell) and navigate to the project folder involved:
-
 ```powershell
-cd "c:\A Developer's Stuff\IITP Intern\SIM2"
 pip install -r requirements.txt
 ```
 
-*(This installs `numpy` and `matplotlib` if you don't have them.)*
+### Step 2: Run the Experiment (Two Modes)
 
-### Step 2: Run the Experiment
-
-Execute the main script:
-
+**Mode A: Random Simulation (Fast)**
 ```powershell
 python experiments/run_experiment.py
 ```
+
+**Mode B: Realistic Mobility (SUMO)**
+```powershell
+python experiments/run_experiment.py --sumo
+```
+*(Ensure SUMO_HOME is set in your environment variables)*
 
 ### Step 3: Interpret the Output
 

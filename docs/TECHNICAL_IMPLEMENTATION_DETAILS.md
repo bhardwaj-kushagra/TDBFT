@@ -13,9 +13,12 @@ This document is written as an implementation specification: it describes what t
 
 ### 0.1. Module Map (Runtime Ownership)
 
-The system is intentionally split into three layers:
+The system is intentionally split into layers:
 
-- **Trust layer (`trust/`)**: deterministic numerical logic and state updates for vehicles and RSUs.
+- **Trust Strategy (`trust/models/`)**: **(New)** Implements the Strategy Pattern. Contains discrete logic for each theoretical model (`ProposedStrategy`, `BTVRStrategy`, etc.), decoupling math from state.
+- **Trust State (`trust/`)**: deterministic numerical logic and state updates.
+    - `vehicle.py`: holds local interaction state.
+    - `rsu.py`: context that delegates aggregation to the active Strategy.
 - **Consensus/storage layer (`blockchain/`)**: mocked ledger structure (DAG) + validator committee selection.
 - **Experiment/drivers (`experiments/`)**: orchestration, metrics, and plotting.
 
@@ -43,9 +46,9 @@ Key runtime objects (long-lived across the simulation run):
 
 This is a research prototype. Several components are deliberately simplified:
 
-- The DAG does **not** implement tip-selection algorithms (e.g., MCMC walks). It uses a simplified “current tips” list.
 - “Consensus” is abstracted as a weighted threshold check; there is no message-level PBFT state machine.
 - RSU “synchronization” is modeled by pairwise vector averaging.
+- **New (v2.0):** The DAG now implements **Trust-Aware Tip Selection** and **Cumulative Trust Weight (TCW)** to model finality.
 
 ## 1. Trust Inference Model (Mathematical Core)
 
@@ -124,18 +127,24 @@ $$ \vec{t}_{k+1} = d (S^T \vec{t}_k) + \frac{1-d}{N}\vec{1} $$
 
 **Significance:** This effectively "weights" a vehicle's opinion by its own reputation. A highly trusted vehicle's local opinions have more impact on the global score of others.
 
-### 2.4. Model Branching in `RSU.compute_vehiclerank`
+### 2.4. Model Branching via Strategy Pattern
 
-The RSU supports multiple “model types” via branching:
+**Refactoring Note (v2.0):** The previous internal branching logic has been replaced by the **Strategy Pattern**.
 
-- `PROPOSED`, `LT_PBFT`: uses VehicleRank (PageRank-like propagation).
-- `BTVR`, `BSED`, `RTM`, `COBATS`: uses simple column-wise aggregation (average of received reports).
+*   **Location:** `trust/models/strategies.py`
+*   **Factory:** `trust/models/__init__.py` -> `get_strategy(model_type)`
 
-Important implementation detail:
+The `RSU` class now holds a `self.strategy` object. When `compute_vehiclerank` is called, it delegates execution:
+```python
+self.global_trust_vector = self.strategy.compute_global_trust(self, all_ids, reports)
+```
 
-- The RSU builds a dense matrix `M` initialized to zeros.
-- For the simple-averaging branch, the code *does not* treat `M[i, j] = 0.0` as a guaranteed report; it re-checks `adjacency_reports` to detect whether `vid` was actually present in the reporter’s dictionary.
-- Default for “no reports”: `0.5`.
+**Strategies Implemented:**
+1.  **`ProposedStrategy` (ours):** Full VehicleRank (Power Iteration).
+2.  **`BTVRStrategy`:** Uses standard EigenTrust-like averaging or simpler Beta aggregation.
+3.  **`PeerTrustStrategy` (RTM/BSED/COBATS):** Implemented as simple column-wise averaging of reports (Baseline behavior).
+
+This ensures strict isolation between the "Proposed" math and baseline comparisons.
 
 ### 2.5. RSU Synchronization Semantics (`incorporate_peer_knowledge`)
 
@@ -246,22 +255,35 @@ Each DAG node is a `Block` with fields:
 
 - `id`: first 8 chars of a UUID4 (`str(uuid.uuid4())[:8]`). This is not a cryptographic hash.
 - `timestamp`: `time.time()` (UNIX epoch float).
-- `data`: a payload; typically a snapshot dict `{vehicle_id: global_trust_score}` or `{}` for simplified tests.
+- `data`: a payload; typically a snapshot dict `{vehicle_id: global_trust_score}`.
 - `validator_id`: the committee member who created the block.
-- `parents`: list of parent block IDs referenced by this block.
+- `parents`: list of parent block IDs.
+- **`issuer_trust`**: Global trust score of the validator at creation time.
+- **`tcw`**: Trust Weighted Cumulative Weight (Self Trust + Sum of Children TCW).
 
-### 4.5. DAG Tip Tracking and “Linear-ish” Behavior
+### 4.5. DAG Tip Selection and TCW (Tru-D Logic)
 
-In `blockchain/dag.py`:
+In `blockchain/dag.py`, the system implements the "Tru-D" logic:
 
-- `self.tips` is a list of block IDs that are considered “current tips”.
-- On `add_block(...)`:
-    - `parents = list(self.tips)`
-    - After inserting the new block, the implementation sets `self.tips = [new_block.id]`.
+1.  **Trust-Aware Tip Selection:**
+    Instead of picking random tips, updated logic preferentially selects tips with higher TCW (or issuer trust).
+    $$ P(tip) \propto TCW(tip) $$
+    This ensures strong trust branches grow faster.
 
-**Consequence:** Although the structure is called a DAG, this policy produces a *narrow* DAG that behaves close to a linear chain (unless merge logic introduces multiple tips).
+2.  **TCW Propagation:**
+    When value-added block $B$ is appended:
+    $$ TCW(B) = Trust(Issuer_B) $$
+    The system then propagates this weight to all ancestors (parents, grandparents, etc.):
+    $$ TCW(Ancestor) \leftarrow TCW(Ancestor) + TCW(B) $$
 
-### 4.6. DAG Merge Semantics (`DAG.merge_with`)
+### 4.6. Finality Condition
+
+A transaction/block is considered **Finalized** if:
+$$ TCW(Block) \ge \Theta $$
+where $\Theta$ is a threshold (e.g., 66% of total active trust).
+This allows the DAG to provide probabilistic finality that hardens over time as more high-trust validators reference the block.
+
+### 4.7. DAG Merge Semantics (`DAG.merge_with`)
 
 `merge_with(other_dag)` merges block dictionaries and then merges tip sets:
 
@@ -374,11 +396,34 @@ In all cases, `interaction_logs[target_id]` stores the raw boolean outcomes over
 | `max_iter` | 100 | `trust/rsu.py` | Max iterations for centrality convergence. |
 | `tol` | 1e-6 | `trust/rsu.py` | Convergence tolerance for floating point math. |
 | `top_n` | 3 | `experiments/run_experiment.py` | Size of Consensus Committee. |
-| `cycle_length` | 50 | `trust/vehicle.py` | Period of oscillation for Swing Attackers. |
-| `interaction_rate` | 50 | `trust/trust_model.py` | Number of interactions per time step. |
-| `consensus_threshold` | 0.66 (2/3) | `blockchain/validator.py` | Required weighted majority for block approval. |
+| `cycle_length` | 50 | & Modes
 
----
+The system offers two distinct simulation cores, controlled via CLI arguments in `experiments/run_experiment.py`.
+
+### 7.1. Mode 1: Default (Python-Random)
+**Command:** `python experiments/run_experiment.py` (optional: `--compare`)
+
+*   **Logic:** Uses `trust.simulator.Simulator` with random interaction generation.
+*   **Speed:** High (~1000 steps/sec).
+*   **Use Case:** Quick validation of trust convergence and detection metrics.
+
+### 7.2. Mode 2: SUMO (TraCI Mobility)
+**Command:** `python experiments/run_experiment.py --sumo`
+
+*   **Logic:** Uses `experiments.run_sumo_experiment.run_sumo_simulation`.
+*   **Interaction Model:** Proximity-based. Vehicles only interact if distance < 100m.
+*   **Use Case:** Realistic mobility evaluation (Figure 6/7 in paper).
+*   **Integration:** Maps SUMO IDs (`veh0`) to Trust IDs (`V000`) dynamically.
+
+### 7.3. Consensus Management (`blockchain/consensus_manager.py`)
+
+Simulation drivers now delegate block creation to `ConsensusManager`. This class:
+1.  Extracts vehicle states.
+2.  Calls `select_validators` (Top-K).
+3.  Executes `check_consensus_weighted`.
+4.  Appends to DAG if successful (passing `issuer_trust` for TCW).
+
+### 7.4
 
 ## 7. Experiment Driver (`experiments/run_experiment.py`) — Comparative Study Pipeline
 

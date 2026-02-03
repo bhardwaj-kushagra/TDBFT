@@ -72,6 +72,12 @@ class ConsensusManager:
             
             # Use DAG's internal block creation logic
             # committee[0] is the primary validator/leader for this block
-            self.dag.add_block(data=trust_snapshot, validator_id=committee[0].id)
+            # Suggestion A: Assign Issuer Trust for TCW calculation
+            leader = committee[0]
+            self.dag.add_block(
+                data=trust_snapshot, 
+                validator_id=leader.id, 
+                issuer_trust=leader.global_trust_score
+            )
             
         return passed

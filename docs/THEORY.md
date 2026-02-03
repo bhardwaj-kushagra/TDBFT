@@ -91,10 +91,41 @@ This ensures that even if malicious nodes enter the committee, they cannot disru
 
 ---
 
-## 4. Blockchain & DAG Integration
+## 4. Tru-D Enhancements: Trust-Weighted DAG (Section V)
 
-*   **Structure**: Trust updates are stored in a DAG (Directed Acyclic Graph) rather than a linear chain to allow parallel writes from different network regions.
-*   **Role**: The DAG serves as the immutable ledger of trust history, ensuring past behaviors cannot be erased.
+Beyond simple committee voting, the "Tru-D" architecture introduces a **Trust-Weighted DAG** to ensure long-term immutability and resistance to "Lazy Tips" or "Parasite Chain" attacks.
+
+### A. Trust-Weighted Cumulative Weight (TCW)
+
+In a standard DAG (e.g., IOTA), cumulative weight is based on computational work (PoW). In Tru-D, weight is based on **Validator Trust**.
+
+*   **Definition**: The TCW of a block $B$ is the sum of its issuer's trust plus the TCW of all future blocks that reference it.
+    $$ TCW(B) = Trust(Issuer_B) + \sum_{C \in Children(B)} TCW(C) $$
+*   **Propagation**: When a new block is added, its trust weight propagates recursively to all ancestors.
+
+### B. Trust-Aware Tip Selection (Eq. 27)
+
+To facilitate the growth of honest branches, validators do not select parents randomly. They use a **Weighted Random Walk** (or weighted selection):
+
+$$ P(\text{select } tip_i) = \frac{e^{\alpha \cdot TCW(tip_i)}}{\sum_j e^{\alpha \cdot TCW(tip_j)}} $$
+*(Simplified in V1.0 code to proportional selection)*
+
+This ensures that blocks issued by high-trust validators (which have high TCW) act as "magnets" for future blocks, starving low-trust (malicious) branches.
+
+### C. Probabilistic Finality
+
+A transaction/block is considered **Finalized** when its accumulated TCW exceeds a global threshold:
+
+$$ TCW(B) > \Theta_{finality} \quad (\text{e.g., } \Theta = 0.66 \times TotalTrust) $$
+
+This provides a continuous finality metric rather than a binary "committed" state.
+
+---
+
+## 5. Blockchain & DAG Integration
+
+*   **Structure**: Trust updates are stored in a DAG (Directed Acyclic Graph) rather than a linear chain.
+*   **Role**: The DAG serves as the immutable ledger of trust history.
 
 ---
 **References**:
