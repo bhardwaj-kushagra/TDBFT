@@ -39,9 +39,9 @@ This repository acts as a simulation sandbox for the **VehicleRank** and **Trust
 
 **Implements:** Section III (Global Trust Logic).
 
-*   **`ProposedStrategy`**: Implements the full **VehicleRank** algorithm (Power Iteration).
-*   **`BTVRStrategy`**: Implements the baseline Beta-based averaging.
-*   **Usage**: The system picks the strategy at runtime using the Factory pattern in `trust/models/__init__.py`.
+* **`ProposedStrategy`**: Implements the full **VehicleRank** algorithm (Power Iteration).
+* **`BTVRStrategy`**: Implements the baseline Beta-based averaging.
+* **Usage**: The system picks the strategy at runtime using the Factory pattern in `trust/models/__init__.py`.
 
 ### B. `trust/bayesian.py`
 
@@ -55,8 +55,8 @@ This repository acts as a simulation sandbox for the **VehicleRank** and **Trust
 
 **Implements:** Section III-C (Context for VehicleRank).
 
-*   **Class**: `RSU`
-*   **Role**: Acts as the Context in the Strategy Pattern. It holds the `strategy` instance and delegates the heavy lifting via `self.strategy.compute_global_trust(...)`.
+* **Class**: `RSU`
+* **Role**: Acts as the Context in the Strategy Pattern. It holds the `strategy` instance and delegates the heavy lifting via `self.strategy.compute_global_trust(...)`.
 
 ### `trust/vehicle.py`
 
@@ -92,13 +92,13 @@ This repository acts as a simulation sandbox for the **VehicleRank** and **Trust
 
 --- & CLI.
 
-*   **Commands**:
-    *   `python ... -s`: Run with SUMO.
-    *   `python ... -c`: Run comparative suite.
-*   **Flow**:
-    1.  Initializes `Simulator` (which builds Logic).
-    2.  Initializes `ConsensusManager` (which builds DAG).
-    3.  Loops through steps -> Interactions -> Trust Updates -> Block Creation
+* **Commands**:
+  * `python ... -s`: Run with SUMO.
+  * `python ... -c`: Run comparative suite.
+* **Flow**:
+    1. Initializes `Simulator` (which builds Logic).
+    2. Initializes `ConsensusManager` (which builds DAG).
+    3. Loops through steps -> Interactions -> Trust Updates -> Block Creation
 
 ### command
 

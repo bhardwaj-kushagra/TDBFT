@@ -402,7 +402,9 @@ In all cases, `interaction_logs[target_id]` stores the raw boolean outcomes over
 | `max_iter` | 100 | `trust/rsu.py` | Max iterations for centrality convergence. |
 | `tol` | 1e-6 | `trust/rsu.py` | Convergence tolerance for floating point math. |
 | `top_n` | 3 | `experiments/run_experiment.py` | Size of Consensus Committee. |
-| `cycle_length` | 50 | & Modes
+| `cycle_length` | 50 | `trust/vehicle.py` | Steps per swing attack cycle. |
+
+## 7. Experiment Drivers & Modes
 
 The system offers two distinct simulation cores, controlled via CLI arguments in `experiments/run_experiment.py`.
 

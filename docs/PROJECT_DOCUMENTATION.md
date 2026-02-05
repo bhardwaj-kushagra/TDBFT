@@ -109,16 +109,19 @@ pip install -r requirements.txt
 
 ### Step 2: Run the Experiment (Two Modes)
 
-**Mode A: Random Simulation (Fast)**
+#### Mode A: Random Simulation (Fast)
+
 ```powershell
 python experiments/run_experiment.py
 ```
 
-**Mode B: Realistic Mobility (SUMO)**
+#### Mode B: Realistic Mobility (SUMO)
+
 ```powershell
 python experiments/run_experiment.py --sumo
 ```
-*(Ensure SUMO_HOME is set in your environment variables)*
+
+> **Note:** Ensure SUMO_HOME is set in your environment variables.
 
 ### Step 3: Interpret the Output
 
