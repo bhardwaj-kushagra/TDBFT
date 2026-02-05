@@ -14,9 +14,10 @@ import time
 import uuid
 
 class Block:
-    def __init__(self, data, validator_id, parents, issuer_trust=0.0):
+    def __init__(self, data, validator_id, parents, issuer_trust=0.0, step=0):
         self.id = str(uuid.uuid4())[:8]
-        self.timestamp = time.time()
+        # Use logical simulation step instead of wall-clock time for reproducibility
+        self.timestamp = step 
         self.data = data # In this project, this is the list of Trust Scores specific to an epoch
         self.validator_id = validator_id
         self.parents = parents # List of parent Block IDs

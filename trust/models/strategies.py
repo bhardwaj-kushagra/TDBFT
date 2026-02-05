@@ -70,16 +70,31 @@ class ProposedStrategy(TrustStrategy):
         if n == 0: return {}
         
         id_to_idx = {vid: i for i, vid in enumerate(all_ids)}
+        
+        # Optimized Matrix Construction (Issue 36: Vectorization)
+        # Flatten the sparse reports into coordinate format for faster assignment
+        # Using list comprehension which is faster than native loops with dict lookups
+        
+        # Prepare data for bulk assignment
+        # reports structure: {reporter_id: {target_id: (alpha, beta)}}
+        
+        # We need a dense matrix for PageRank anyway, but we can fill it smarter.
         M = np.zeros((n, n))
         
-        # Build Matrix M for VehicleRank
         for reporter_id, targets in reports.items():
             if reporter_id not in id_to_idx: continue
-            i = id_to_idx[reporter_id]
-            for target_id, (alpha, beta) in targets.items():
-                if target_id not in id_to_idx: continue
-                j = id_to_idx[target_id]
-                M[i, j] = compute_trust(alpha, beta)
+            row_idx = id_to_idx[reporter_id]
+            
+            # Filter valid targets and map keys to indices efficiently
+            valid_updates = [
+                (id_to_idx[tid], compute_trust(a, b)) 
+                for tid, (a, b) in targets.items() 
+                if tid in id_to_idx
+            ]
+            
+            if valid_updates:
+                cols, values = zip(*valid_updates)
+                M[row_idx, list(cols)] = values
         
         # Add small self-loop epsilon to ensure connectivity/trust in self (Fixes Issue 9)
         epsilon = 0.0001

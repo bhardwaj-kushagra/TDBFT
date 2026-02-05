@@ -15,7 +15,7 @@ class DAG:
         # For this prototype, we just link to the last N blocks added.
         self.tips: List[str] = [] 
 
-    def add_block(self, data, validator_id, issuer_trust=0.0, n_parents: int = 2) -> Block:
+    def add_block(self, data, validator_id, issuer_trust=0.0, n_parents: int = 2, step: int = 0) -> Block:
         """
         Creates and adds a new block to the DAG.
         Uses Trust-Aware Tip Selection (Suggestion B).
@@ -24,7 +24,7 @@ class DAG:
         # Tip Selection: Select n_parents from self.tips using Trust-Aware Selection
         parents = self.select_tips_trust_aware(n_parents)
         
-        new_block = Block(data, validator_id, parents, issuer_trust)
+        new_block = Block(data, validator_id, parents, issuer_trust, step=step)
         self.blocks[new_block.id] = new_block
         
         # Update tips:

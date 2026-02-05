@@ -20,6 +20,15 @@ class TrustModel:
         self.step_count = 0
         self.model_type = model_type
         
+        # Issue 39 Fix: Ensure disjoint buckets for behavior
+        # Sanity check: Total special behavior cannot exceed 100%
+        if percent_malicious + percent_swing > 1.0:
+            raise ValueError(f"Malicious ({percent_malicious}) + Swing ({percent_swing}) exceeds 1.0")
+
+        # Behavior Buckets:
+        # [0 ... num_malicious) -> Malicious
+        # [num_malicious ... num_malicious + num_swing) -> Swing
+        # [num_malicious + num_swing ... N) -> Honest
         num_malicious = int(num_vehicles * percent_malicious)
         num_swing = int(num_vehicles * percent_swing)
         

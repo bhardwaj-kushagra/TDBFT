@@ -77,7 +77,8 @@ class ConsensusManager:
             self.dag.add_block(
                 data=trust_snapshot, 
                 validator_id=leader.id, 
-                issuer_trust=leader.global_trust_score
+                issuer_trust=leader.global_trust_score,
+                step=self.step_count
             )
             
         return passed
