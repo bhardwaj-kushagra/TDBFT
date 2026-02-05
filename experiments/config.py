@@ -32,12 +32,13 @@ SUMO_VEHICLE_COUNT = 20
 # ==========================================
 # MODELS & VISUALS
 # ==========================================
-# Removed BTVR and BSED as per request
-MODELS = ['PBFT', 'RTM', 'COBATS', 'LT_PBFT', 'PROPOSED']
+MODELS = ['PBFT', 'BTVR', 'BSED', 'RTM', 'COBATS', 'LT_PBFT', 'PROPOSED']
 
 # Plotting Styles
 COLORS = {
     'PBFT': 'gray',
+    'BTVR': 'blue',
+    'BSED': 'green',
     'RTM': 'orange',
     'COBATS': 'cyan',
     'LT_PBFT': 'purple',
@@ -46,6 +47,8 @@ COLORS = {
 
 LINE_STYLES = {
     'PBFT': ':',
+    'BTVR': '--',
+    'BSED': ':',
     'RTM': '-.',
     'COBATS': '--',
     'LT_PBFT': ':',
@@ -59,11 +62,12 @@ LINE_WIDTHS = {
 
 def get_style(model):
     """Returns a dict of matplotlib style arguments for a given model."""
+    label = "Proposed" if model == "PROPOSED" else model
     return {
         'color': COLORS.get(model, 'black'),
         'linestyle': LINE_STYLES.get(model, '-'),
         'linewidth': LINE_WIDTHS.get(model, LINE_WIDTHS['DEFAULT']),
-        'label': model
+        'label': label
     }
 
 # ==========================================

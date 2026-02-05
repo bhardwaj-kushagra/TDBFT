@@ -683,9 +683,9 @@ def generate_graph_3_and_4(out_dir="results"):
     for model in MODELS:
         plt.plot(sizes, results_latency[model], marker='o', **get_style(model))
     
-    plt.title("Analytical Confirmation Delay vs Network Size")
+    plt.title("Consensus Latency vs Network Size")
     plt.xlabel("Network Size (Nodes)")
-    plt.ylabel("Computed Delay (ms)")
+    plt.ylabel("Consensus Latency (ms)")
     plt.legend()
     plt.grid(True, alpha=0.3)
     plt.savefig(f"{out_dir}/graph4b_latency_line.png")
