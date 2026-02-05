@@ -40,7 +40,7 @@ Key runtime objects (long-lived across the simulation run):
 ### 0.3. Determinism vs Randomness
 
 - The trust computations (Beta update, VehicleRank matrix math, weighted voting check) are deterministic given the same interaction outcomes.
-- Interaction outcomes are stochastic (Python `random`), and **there is no global seed set by default**. Reproducible runs require calling `random.seed(...)` (and `numpy.random.seed(...)` if extended) in the driver.
+- Interaction outcomes are stochastic (Python `random`). For the paper/plot pipeline, `experiments/benchmark.py` sets deterministic seeds (`random.seed(seed)` and `numpy.random.seed(seed)`, default `seed=42`). Ad-hoc runs that bypass the benchmark may remain unseeded unless the driver explicitly sets seeds.
 
 ### 0.4. Scope Notes (Intended Simplifications)
 
@@ -140,9 +140,13 @@ self.global_trust_vector = self.strategy.compute_global_trust(self, all_ids, rep
 ```
 
 **Strategies Implemented:**
-1.  **`ProposedStrategy` (ours):** Full VehicleRank (Power Iteration).
-2.  **`BTVRStrategy`:** Uses standard EigenTrust-like averaging or simpler Beta aggregation.
-3.  **`PeerTrustStrategy` (RTM/BSED/COBATS):** Implemented as simple column-wise averaging of reports (Baseline behavior).
+1.  **`ProposedStrategy` (ours):** Bayesian local trust + VehicleRank (PageRank-like power iteration).
+2.  **`PbftStrategy` (baseline):** Trust-agnostic; equal global trust for all nodes (no ranking).
+3.  **`LtPbftStrategy` (baseline):** Bayesian local trust + simple averaging (no graph propagation).
+4.  **`BtvrStrategy` (baseline):** Bayesian local trust + simple averaging.
+5.  **`CobatsStrategy` (baseline, representative/lite):** Bayesian local trust + confidence-weighted averaging (weight ∝ α+β).
+6.  **`BsedStrategy` (baseline, representative/lite):** correctness-rate reports + outlier/credibility down-weighting.
+7.  **`RtmStrategy` (baseline):** smoothed direct reputation updates + simple averaging.
 
 This ensures strict isolation between the "Proposed" math and baseline comparisons.
 
@@ -173,6 +177,7 @@ Defined in `trust/vehicle.py`, the system models three distinct adversary profil
 ### 3.2. Constant Malicious (DoS/Blackhole)
 *   **Behavior:** Cooperates with probability $P_{coop} = 0.20$.
 *   **Strategy:** Consistently drops packets or sends falsified data.
+*   **Additional behavior (misreporting):** Malicious nodes also perform “bad-mouthing” in outgoing trust reports (`Vehicle.get_trust_reports`), i.e., they slander peers by reporting very low trust values (float reports → `0.0`, tuple reports → `(1.0, 100.0)`).
 *   **Detection Signature:** Trust score rapidly converges to $\approx 0.2$.
 
 ### 3.3. Swing Attacker (On-Off / Oscillating)
@@ -180,10 +185,11 @@ Defined in `trust/vehicle.py`, the system models three distinct adversary profil
 *   **Implementation:**
     ```python
     cycle_length = 50
-    phase = (step_count // cycle_length) % 2
+    phase = ((step_count + swing_offset) // cycle_length) % 2
     probability = 0.99 if phase == 0 else 0.10
     ```
-*   **Detection Challenge:** Requires the sliding window or forgetting factor in the RSU aggregation to detect the sudden drop.
+    where `swing_offset` is a per-vehicle random integer so swing attackers do not flip simultaneously.
+*   **Detection Challenge:** In the current code there is **no RSU forgetting factor**; fast detection is supported via local sliding-window re-estimation (`Vehicle.get_windowed_local_trust`) and by the Proposed model’s graph aggregation.
 
 ### 3.4. Behavior Implementation: `Vehicle.perform_action(step_count) -> bool`
 
@@ -254,7 +260,7 @@ Where:
 Each DAG node is a `Block` with fields:
 
 - `id`: first 8 chars of a UUID4 (`str(uuid.uuid4())[:8]`). This is not a cryptographic hash.
-- `timestamp`: `time.time()` (UNIX epoch float).
+- `timestamp`: logical simulation `step` (integer) passed in during block creation for reproducibility (stored in the `timestamp` field).
 - `data`: a payload; typically a snapshot dict `{vehicle_id: global_trust_score}`.
 - `validator_id`: the committee member who created the block.
 - `parents`: list of parent block IDs.
@@ -305,17 +311,17 @@ The `experiments/run_experiment.py` script drives the system through discrete ti
 1.  **Initialization (`TrustModel.__init__`)**:
     *   Instantiates $N$ vehicles.
     *   Assigns behaviors (Honest/Malicious/Swing) based on percent distributions.
-    *   Initializes Adjacency Matrix $M$ with uniform priors.
+    *   Initializes implicit Bayesian priors via default interaction state (effectively $(\alpha,\beta)=(1,1)$ until evidence is observed).
 
 2.  **Interaction Loop (Per Step)**:
     *   **Selection:** Random pairs $(i, j)$ selected (or via SUMO proximity).
     *   **Action:** $j$ performs action (Success/Fail).
     *   **Update:** $i$ updates local $\alpha, \beta$ for $j$.
 
-3.  **Aggregation Phase (`simulation_step % 10 == 0`)**:
+3.  **Aggregation Phase (Per Step)**:
     *   RSU pulls all local trust data.
-    *   Runs **VehicleRank** to compute new Global Trust Vector.
-    *   RSU applies **Forgetting Factor** (decay) to old global scores to allow recovery/punishment.
+    *   Runs the active strategy to compute the new Global Trust Vector (VehicleRank for `PROPOSED`, averaging/weighting for baselines).
+    *   RSU synchronization (if enabled) is done via peer-vector averaging (`incorporate_peer_knowledge`).
     *   Vehicles are re-ranked.
 
 4.  **Consensus Phase**:
@@ -382,7 +388,7 @@ Vehicles store multiple representations depending on `model_type`:
 - `BSED` (behavior score):
     - `interactions[target_id] = (correct_count, total_count)`.
 - `RTM`:
-    - state stored in `rtm_trust[target_id]` as a scalar updated by `trust = (trust + outcome)/2`.
+    - state stored in `rtm_trust[target_id]` as a scalar updated via α-smoothing: `trust_new = α * trust_old + (1-α) * outcome` (α≈0.8 in the current strategy).
 
 In all cases, `interaction_logs[target_id]` stores the raw boolean outcomes over time for analysis and windowed re-estimation.
 
@@ -427,7 +433,7 @@ Simulation drivers now delegate block creation to `ConsensusManager`. This class
 
 ## 7. Experiment Driver (`experiments/run_experiment.py`) — Comparative Study Pipeline
 
-The experiment script contains both single-model simulation and a comparative multi-model evaluation pipeline.
+The primary user entry point is `experiments/run_experiment.py`, but the core loop used for graphs/statistics lives in `experiments/benchmark.py`.
 
 ### 7.1. Core Utilities: `calculate_statistics(...)`
 
@@ -440,7 +446,7 @@ This routine computes printed “Results & Statistics”:
 - **Consensus success rate:** approximated as `len(dags[0].blocks) / total_steps`.
 - **Convergence:** builds a rank matrix and checks when >90% of nodes have rank changes within 5% of N.
 
-### 7.2. Single Run Helper: `run_simulation(model_name, steps, num_vehicles, verbose)`
+### 7.2. Single Run Helper: `run_single_simulation(model_name, ...)`
 
 Per step:
 
@@ -450,12 +456,13 @@ Per step:
 4. Run consensus check:
      - `LT_PBFT`, `COBATS`: uses `check_consensus_simple` (unweighted).
      - Others: uses `check_consensus_weighted`.
-5. If consensus is reached, a block is appended to `dags[0]`:
-     - data payload currently `{}` in this helper.
+5. If consensus is reached, a block is appended to the manager-owned DAG with a trust snapshot payload.
 
-### 7.3. Comparative Study: `run_comparative_study()`
+**Reproducibility note:** `run_single_simulation` seeds `random` and `numpy` (default `seed=42`).
 
-- Models evaluated: `['BTVR', 'BSED', 'RTM', 'COBATS', 'LT_PBFT', 'PROPOSED']`.
+### 7.3. Comparative Study (Paper Suite): `run_paper_suite()`
+
+- Models evaluated: `['PBFT', 'BTVR', 'BSED', 'RTM', 'COBATS', 'LT_PBFT', 'PROPOSED']`.
 - Stores:
     - evolution data (per model) for trust evolution plots.
     - final normalized scores for detection plots.
@@ -565,7 +572,7 @@ This section documents current “as-coded” behavior that matters for future e
 - **No true PBFT message phases:** Weighted check approximates a commit rule but does not model prepare/commit rounds.
 - **RSU sync is averaging:** There is no adversarial RSU model or byzantine RSU handling.
 - **Tip set correctness is simplified:** DAG tips are tracked as a bounded list and do not enforce real ancestry-based tip definition.
-- **Random seed not fixed:** Results can vary across runs unless seeds are set.
+- **Seeding is pipeline-dependent:** The benchmark/paper pipeline sets seeds (default `seed=42`); custom ad-hoc drivers may remain stochastic unless they also seed.
 
 ---
 
@@ -590,8 +597,10 @@ This section traces the **actual** function-level call order and the data passed
 
 - **Non-SUMO experiments**
     - `experiments/run_experiment.py`
-        - `run_comparative_study()` (multi-model)
-        - `run_simulation(model_name, steps, num_vehicles, verbose)` (single-model helper)
+        - `run_paper_suite()` (multi-model paper graphs)
+        - `run_default_demo()` (single-model demo)
+    - `experiments/benchmark.py`
+        - `run_single_simulation(model_name, ...)` (core loop used for plots/statistics)
 
 - **SUMO mobility-driven run**
     - `experiments/run_sumo_experiment.py`
@@ -618,21 +627,21 @@ This section traces the **actual** function-level call order and the data passed
 - `DAG`
     - owns `blocks: Dict[str, Block]` and `tips: List[str]`
 
-### 13.3. Non-SUMO Sequence (Single Model): `run_simulation(...)`
+### 13.3. Non-SUMO Sequence (Single Model): `run_single_simulation(...)`
 
-This is the exact per-step order used in the helper routine inside `experiments/run_experiment.py`.
+This is the exact per-step order used in the benchmark loop in `experiments/benchmark.py`.
 
 #### 13.3.1. Sequence Diagram (Mermaid)
 
 ```mermaid
 sequenceDiagram
-        participant Driver as experiments/run_experiment.py
+    participant Driver as experiments/benchmark.py
         participant Sim as trust/simulator.py::Simulator
         participant TM as trust/trust_model.py::TrustModel
         participant V as trust/vehicle.py::Vehicle
         participant RSU as trust/rsu.py::RSU
-        participant Val as blockchain/validator.py
-        participant DAG as blockchain/dag.py::DAG
+    participant CM as blockchain/consensus_manager.py::ConsensusManager
+    participant DAG as blockchain/dag.py::DAG
 
         Driver->>Sim: Simulator(...)
         Sim->>TM: TrustModel.__init__(...)
@@ -653,11 +662,9 @@ sequenceDiagram
                 TM->>RSU: incorporate_peer_knowledge(peer_vector) (pairwise)
                 TM->>V: set global_trust_score; append trust_history
 
-                Driver->>TM: get_ranked_vehicles()
-                Driver->>Val: select_validators(ranked, top_n=5)
-                Driver->>Val: check_consensus_* (weighted or simple)
+                Driver->>CM: attempt_consensus(step=t)
                 alt consensus reached
-                        Driver->>DAG: add_block(data={}, validator_id=committee[0].id)
+                    CM->>DAG: add_block(data=trust_snapshot, validator_id=leader.id)
                 end
         end
 ```

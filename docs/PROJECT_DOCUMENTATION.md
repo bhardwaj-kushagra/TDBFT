@@ -36,7 +36,7 @@ graph TD
         A -- Updates Local Trust (Alpha/Beta) --> DB[(Local Storage)]
     
         DB -- Reports Trust Scores --> RSU[Roadside Unit]
-        RSU -- Aggregates & Decays --> GT[Global Trust Score]
+        RSU -- Aggregates --> GT[Global Trust Score]
     
         GT -- Ranks Vehicles --> Rank[Reputation Ranking]
         Rank -- Selects Top N --> Val[Validators]
@@ -56,9 +56,9 @@ Instead of a simple "rating", we use probability.
     $$ T = \frac{\alpha}{\alpha + \beta} $$
     Example: 9 good, 1 bad $\rightarrow \alpha=10, \beta=2 \rightarrow T = 10/12 = 0.83$.
 
-#### B. The Forgetting Factor
+#### B. Recency Handling (Windowing vs Decay)
 
-Trust shouldn't be permanent. Old behavior is less relevant than new behavior. The **Roadside Unit (RSU)** applies a "forgetting factor" (e.g., 0.95) when aggregating scores. This means yesterday's reputation matters slightly less than today's.
+Trust shouldn't be permanent. In the current prototype codebase there is **no explicit RSU-side forgetting factor/decay** applied during global aggregation. Recency can be emphasized via (a) repeated recomputation each step from evolving local evidence and (b) optional sliding-window local trust (`Vehicle.get_windowed_local_trust`). A true exponential forgetting factor can be added later if needed for the paper.
 
 #### C. Validators & The DAG
 

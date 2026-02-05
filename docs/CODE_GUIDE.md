@@ -65,7 +65,7 @@ This repository acts as a simulation sandbox for the **VehicleRank** and **Trust
 * **Behaviors**:
   * `HONEST`: 99% cooperation.
   * `MALICIOUS`: 20% cooperation (Packet drop/Bad data).
-  * `SWING`: Alternates behavior every 50 steps to fool simple averaging models. VehicleRank detects this by analyzing the entire graphs structure rather than just history.
+  * `SWING`: Alternates behavior in 50-step cycles using a per-vehicle random phase offset (so attackers don’t flip in sync). The Proposed model’s VehicleRank aggregation helps damp oscillations relative to simple averaging baselines.
 
 ### C. `blockchain/validator.py`
 
