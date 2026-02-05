@@ -17,8 +17,20 @@ def _run_pagerank(M: np.ndarray, n: int, damping: float, max_iter: int, tol: flo
     """Helper to run the PageRank math on a matrix M."""
     # Normalize rows
     row_sums = M.sum(axis=1, keepdims=True)
-    row_sums[row_sums == 0] = 1.0 
-    S = M / row_sums
+    
+    # Fix dangling nodes (rows with zero sum) by redistributing mass uniformly
+    # Create the transition matrix S
+    S = np.zeros_like(M)
+    
+    # Avoid division by zero
+    non_zero_rows = (row_sums != 0).flatten()
+    S[non_zero_rows] = M[non_zero_rows] / row_sums[non_zero_rows]
+    
+    # For dangling nodes (row_sum == 0), S[i] = 1/n
+    # This prevents trust leakage
+    zero_rows = ~non_zero_rows
+    if np.any(zero_rows):
+        S[zero_rows] = 1.0 / n
     
     # Iterative Power Method
     t_vec = np.ones(n) / n
@@ -68,6 +80,10 @@ class ProposedStrategy(TrustStrategy):
                 if target_id not in id_to_idx: continue
                 j = id_to_idx[target_id]
                 M[i, j] = compute_trust(alpha, beta)
+        
+        # Add small self-loop epsilon to ensure connectivity/trust in self (Fixes Issue 9)
+        epsilon = 0.0001
+        np.fill_diagonal(M, M.diagonal() + epsilon)
                 
         # Run PageRank (Core feature of Proposed Model)
         # Using RSU params which can be tuned specifically for PROPOSED
