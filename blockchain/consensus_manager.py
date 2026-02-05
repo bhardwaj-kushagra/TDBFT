@@ -78,7 +78,7 @@ class ConsensusManager:
                 data=trust_snapshot, 
                 validator_id=leader.id, 
                 issuer_trust=leader.global_trust_score,
-                step=self.step_count
+                step=step
             )
             
         return passed

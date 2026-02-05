@@ -32,13 +32,12 @@ SUMO_VEHICLE_COUNT = 20
 # ==========================================
 # MODELS & VISUALS
 # ==========================================
-MODELS = ['PBFT', 'BTVR', 'BSED', 'RTM', 'COBATS', 'LT_PBFT', 'PROPOSED']
+# Removed BTVR and BSED as per request
+MODELS = ['PBFT', 'RTM', 'COBATS', 'LT_PBFT', 'PROPOSED']
 
 # Plotting Styles
 COLORS = {
     'PBFT': 'gray',
-    'BTVR': 'blue',
-    'BSED': 'green',
     'RTM': 'orange',
     'COBATS': 'cyan',
     'LT_PBFT': 'purple',
@@ -47,8 +46,6 @@ COLORS = {
 
 LINE_STYLES = {
     'PBFT': ':',
-    'BTVR': '--',
-    'BSED': ':',
     'RTM': '-.',
     'COBATS': '--',
     'LT_PBFT': ':',
