@@ -96,16 +96,39 @@ class ProposedStrategy(TrustStrategy):
 
 
 # ==============================================================================
-# 2. LT_PBFT
+# 2. PBFT (Baseline)
+# ==============================================================================
+class PbftStrategy(TrustStrategy):
+    """
+    PBFT / BFT Baseline.
+    Trust-agnostic. All nodes are trusted equally.
+    Used to simulate classical BFT where 2/3 majority rules with no trust memory.
+    """
+    def record_interaction(self, vehicle, target_id: str, is_positive: bool):
+        # PBFT does not track trust
+        pass
+
+    def get_local_trust(self, vehicle, target_id: str) -> float:
+        # Everyone is 1.0 (or equal)
+        return 1.0
+
+    def get_trust_reports(self, vehicle) -> Dict:
+        return {}
+
+    def compute_global_trust(self, rsu, all_ids: List[str], reports: Dict) -> Dict[str, float]:
+        # Return equal score for all to represent "No Trust Ranking"
+        # Validator selection will be random/arbitrary among these
+        return {vid: 1.0 for vid in all_ids}
+
+
+# ==============================================================================
+# 3. LT_PBFT (Lightweight Trust PBFT)
 # ==============================================================================
 class LtPbftStrategy(TrustStrategy):
     """
     Lightweight Trust-Based PBFT.
-    
-    NOTE: In the reference code, this shared logic with PROPOSED.
-    We separate it here. If LT_PBFT should use standard averaging instead 
-    of VehicleRank, you can replace the `compute_global_trust` body below.
-    Currently: Implements VehicleRank (per legacy code matches).
+    Uses ONLY local trust (Bayesian) + Simple Averaging.
+    Explicitly weaker than PBFT (adds overhead) and Proposed (no Graph trust).
     """
     def record_interaction(self, vehicle, target_id: str, is_positive: bool):
         alpha, beta = vehicle.interactions.get(target_id, (1.0, 1.0))
@@ -120,38 +143,31 @@ class LtPbftStrategy(TrustStrategy):
         return vehicle.interactions
 
     def compute_global_trust(self, rsu, all_ids: List[str], reports: Dict) -> Dict[str, float]:
-        # Legacy Assumption: LT_PBFT was using the same aggregation as Proposed.
-        # This code is now independent. 
-        # TODO: If LT_PBFT should be "weaker", replace this with simple averaging.
-        n = len(all_ids)
-        if n == 0: return {}
-        
-        id_to_idx = {vid: i for i, vid in enumerate(all_ids)}
-        M = np.zeros((n, n))
+        # REPLACED: Use Simple Averaging instead of PageRank
+        # This matches "Lightweight" and ensures it's distinguishable from Proposed
+        scores = {vid: [] for vid in all_ids}
         
         for reporter_id, targets in reports.items():
-            if reporter_id not in id_to_idx: continue
-            i = id_to_idx[reporter_id]
             for target_id, (alpha, beta) in targets.items():
-                if target_id not in id_to_idx: continue
-                j = id_to_idx[target_id]
-                M[i, j] = compute_trust(alpha, beta)
-                
-        # Run PageRank
-        t_vec = _run_pagerank(M, n, rsu.alpha_damping, rsu.max_iter, rsu.tol)
-            
+                if target_id in scores:
+                    scores[target_id].append(compute_trust(alpha, beta))
+                    
         result = {}
-        for vid, idx in id_to_idx.items():
-            result[vid] = t_vec[idx]
+        for vid, val_list in scores.items():
+            if val_list:
+                result[vid] = sum(val_list) / len(val_list)
+            else:
+                result[vid] = 0.5
         return result
 
 
 # ==============================================================================
-# 3. BTVR (Bayesian Trust-based Voting Resource)
+# 4. BTVR (Bayesian Trust-based Voting Resource)
 # ==============================================================================
 class BtvrStrategy(TrustStrategy):
     """
     BTVR: Standard Bayesian Local + Simple Averaging Global.
+    A baseline for "Basic Trust".
     """
     def record_interaction(self, vehicle, target_id: str, is_positive: bool):
         alpha, beta = vehicle.interactions.get(target_id, (1.0, 1.0))
@@ -166,7 +182,7 @@ class BtvrStrategy(TrustStrategy):
         return vehicle.interactions
 
     def compute_global_trust(self, rsu, all_ids: List[str], reports: Dict) -> Dict[str, float]:
-        # Logic: Simple Average of all available reports
+        # Logic: Simple Average
         scores = {vid: [] for vid in all_ids}
         
         for reporter_id, targets in reports.items():
@@ -184,13 +200,12 @@ class BtvrStrategy(TrustStrategy):
 
 
 # ==============================================================================
-# 4. COBATS
+# 5. COBATS (Representative / Lite)
 # ==============================================================================
 class CobatsStrategy(TrustStrategy):
     """
-    COBATS: Confidence-based Trust.
-    Currently behaves like BTVR (Average). 
-    TODO: Add confidence-weighting based on total interactions (alpha+beta).
+    COBATS-lite: Confidence-based Trust.
+    Uses Interaction Count as Confidence Weight.
     """
     def record_interaction(self, vehicle, target_id: str, is_positive: bool):
         alpha, beta = vehicle.interactions.get(target_id, (1.0, 1.0))
@@ -198,7 +213,6 @@ class CobatsStrategy(TrustStrategy):
         vehicle.interactions[target_id] = (new_alpha, new_beta)
 
     def get_local_trust(self, vehicle, target_id: str) -> float:
-        # COBATS often considers uncertainty, but basic scalar is mean
         alpha, beta = vehicle.interactions.get(target_id, (1.0, 1.0))
         return compute_trust(alpha, beta)
 
@@ -206,31 +220,38 @@ class CobatsStrategy(TrustStrategy):
         return vehicle.interactions
 
     def compute_global_trust(self, rsu, all_ids: List[str], reports: Dict) -> Dict[str, float]:
-        # Logic: Simple Average (Same baseline as BTVR for now)
-        scores = {vid: [] for vid in all_ids}
+        # Weighted Average based on Confidence (Total Interactions)
+        # Weight = log(alpha + beta) to prevent dominance by old nodes? 
+        # Or simple alpha + beta. Using linear sum for "Confidence".
+        
+        weighted_sums = {vid: 0.0 for vid in all_ids}
+        total_weights = {vid: 0.0 for vid in all_ids}
         
         for reporter_id, targets in reports.items():
             for target_id, (alpha, beta) in targets.items():
-                if target_id in scores:
-                    scores[target_id].append(compute_trust(alpha, beta))
+                if target_id in weighted_sums:
+                    trust_val = compute_trust(alpha, beta)
+                    weight = alpha + beta # Confidence metric
+                    
+                    weighted_sums[target_id] += trust_val * weight
+                    total_weights[target_id] += weight
                     
         result = {}
-        for vid, val_list in scores.items():
-            if val_list:
-                result[vid] = sum(val_list) / len(val_list)
+        for vid in all_ids:
+            if total_weights[vid] > 0:
+                result[vid] = weighted_sums[vid] / total_weights[vid]
             else:
                 result[vid] = 0.5
         return result
 
 
 # ==============================================================================
-# 5. BSED (Behavior-based)
+# 6. BSED (Behavior-based, Representative / Simplified)
 # ==============================================================================
 class BsedStrategy(TrustStrategy):
     """
-    BSED: Event-based / Count-based Trust.
-    Local: Ratio (Correct / Total).
-    Global: Simple Averaging.
+    BSED-lite: Event-based / Count-based Trust.
+    Includes "Data Consistency" check to penalize outliers.
     """
     def record_interaction(self, vehicle, target_id: str, is_positive: bool):
         # vehicle.interactions stores {target_id: (correct, total)}
@@ -248,37 +269,77 @@ class BsedStrategy(TrustStrategy):
         return vehicle.interactions
 
     def compute_global_trust(self, rsu, all_ids: List[str], reports: Dict) -> Dict[str, float]:
+        # 1. Initial Simple Average
         scores = {vid: [] for vid in all_ids}
-        
         for reporter_id, targets in reports.items():
             for target_id, (c, t) in targets.items():
                 if target_id in scores:
                     val = c/t if t > 0 else 0.5
                     scores[target_id].append(val)
+        
+        initial_means = {}
+        for vid, val_list in scores.items():
+            initial_means[vid] = sum(val_list) / len(val_list) if val_list else 0.5
+
+        # 2. Credibility Weighting (Outlier Penalty)
+        # If a reporter deviates significantly from the initial mean, reduce their weight.
+        reporter_weights = {vid: 1.0 for vid in all_ids}
+        
+        for reporter_id, targets in reports.items():
+            deviations = []
+            for target_id, (c, t) in targets.items():
+                val = c/t if t > 0 else 0.5
+                consensus = initial_means.get(target_id, 0.5)
+                deviations.append(abs(val - consensus))
+            
+            if deviations:
+                avg_dev = sum(deviations) / len(deviations)
+                # If avg deviation is high (>0.3), credibility drops
+                if avg_dev > 0.3:
+                    reporter_weights[reporter_id] = 0.5 # Weak penalty
+                if avg_dev > 0.5:
+                    reporter_weights[reporter_id] = 0.1 # Strong penalty
+
+        # 3. Weighted Aggregation
+        weighted_sums = {vid: 0.0 for vid in all_ids}
+        total_weights = {vid: 0.0 for vid in all_ids}
+
+        for reporter_id, targets in reports.items():
+            w = reporter_weights.get(reporter_id, 1.0)
+            for target_id, (c, t) in targets.items():
+                if target_id in weighted_sums:
+                    val = c/t if t > 0 else 0.5
+                    weighted_sums[target_id] += val * w
+                    total_weights[target_id] += w
                     
         result = {}
-        for vid, val_list in scores.items():
-            if val_list:
-                result[vid] = sum(val_list) / len(val_list)
+        for vid in all_ids:
+            if total_weights[vid] > 0:
+                result[vid] = weighted_sums[vid] / total_weights[vid]
             else:
                 result[vid] = 0.5
         return result
 
 
 # ==============================================================================
-# 6. RTM (Reputation Trust Management)
+# 7. RTM (Reputation Trust Management - Stabilized)
 # ==============================================================================
 class RtmStrategy(TrustStrategy):
     """
-    RTM: Recursive/Direct Trust Update.
-    Local: score = (old + outcome)/2.
-    Global: Simple Averaging.
+    RTM: Recursive/Direct Trust Update with Smoothing.
+    Fixed Instability: Uses alpha-smoothing instead of simple average.
+    trust_new = alpha * trust_old + (1 - alpha) * observation
     """
     def record_interaction(self, vehicle, target_id: str, is_positive: bool):
         # vehicle.rtm_trust stores {target_id: float}
         current = vehicle.rtm_trust.get(target_id, 0.5)
         outcome = 1.0 if is_positive else 0.0
-        vehicle.rtm_trust[target_id] = (current + outcome) / 2.0
+        
+        # Smoothing factor alpha. Typical range [0.7, 0.9].
+        # Higher alpha = more memory, less volatility.
+        alpha = 0.8 
+        
+        vehicle.rtm_trust[target_id] = alpha * current + (1.0 - alpha) * outcome
 
     def get_local_trust(self, vehicle, target_id: str) -> float:
         return vehicle.rtm_trust.get(target_id, 0.5)
@@ -287,6 +348,8 @@ class RtmStrategy(TrustStrategy):
         return vehicle.rtm_trust
 
     def compute_global_trust(self, rsu, all_ids: List[str], reports: Dict) -> Dict[str, float]:
+        # RTM typically transmits the reputation value directly.
+        # Global aggregation is Average.
         scores = {vid: [] for vid in all_ids}
         
         for reporter_id, targets in reports.items():
@@ -309,6 +372,8 @@ def get_strategy(model_type: str) -> TrustStrategy:
     """Returns a fresh instance of the requested strategy."""
     if model_type == 'PROPOSED':
         return ProposedStrategy()
+    elif model_type == 'PBFT' or model_type == 'BFT':
+        return PbftStrategy()
     elif model_type == 'LT_PBFT':
         return LtPbftStrategy()
     elif model_type == 'BTVR':

@@ -606,9 +606,9 @@ def generate_graph_3_and_4(out_dir="results"):
     plt.figure(figsize=(10, 6))
     for model in MODELS:
         plt.plot(sizes, results_capacity[model], **get_style(model))
-    plt.title("Normalized Throughput Capacity vs Network Size")
+    plt.title("Normalized Capacity Index vs Network Size")
     plt.xlabel("Network Size (Number of Vehicles)")
-    plt.ylabel("Capacity (Tx/sec)")
+    plt.ylabel("Capacity Index")
     plt.legend()
     plt.grid(True, alpha=0.3)
     plt.savefig(f"{out_dir}/graph3_capacity_line.png")
@@ -622,17 +622,17 @@ def generate_graph_3_and_4(out_dir="results"):
         offset = (i - len(MODELS)/2) * width + width/2
         c = COLORS.get(model, 'gray')
         plt.bar(x + offset, results_capacity[model], width, label=model, color=c)
-    plt.title("Average Capacity vs Network Size")
+    plt.title("Average Capacity Index vs Network Size")
     plt.xlabel("Network Size")
-    plt.ylabel("Capacity (Tx/sec)")
+    plt.ylabel("Capacity Index")
     plt.xticks(x, [str(size) for size in sizes])
     plt.legend()
     plt.grid(axis='y', alpha=0.3)
     plt.savefig(f"{out_dir}/graph4_throughput_bar.png")
     plt.close()
 
-    # Graph 4B: Consensus Latency vs Network Size (New Feature)
-    print("Generating Graph 4B (Latency)...")
+    # Graph 4B: Analytical Confirmation Delay vs Network Size (New Feature)
+    print("Generating Graph 4B (Analytical Delay)...")
     results_latency = {m: [] for m in MODELS}
     
     for idx_n, N in enumerate(sizes):
@@ -671,9 +671,9 @@ def generate_graph_3_and_4(out_dir="results"):
     for model in MODELS:
         plt.plot(sizes, results_latency[model], marker='o', **get_style(model))
     
-    plt.title("Consensus Latency vs Network Size")
+    plt.title("Analytical Confirmation Delay vs Network Size")
     plt.xlabel("Network Size (Nodes)")
-    plt.ylabel("Consensus Latency (ms)")
+    plt.ylabel("Computed Delay (ms)")
     plt.legend()
     plt.grid(True, alpha=0.3)
     plt.savefig(f"{out_dir}/graph4b_latency_line.png")

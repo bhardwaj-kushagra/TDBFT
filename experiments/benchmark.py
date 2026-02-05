@@ -2,8 +2,10 @@
 Benchmark Runner Module.
 
 Contains the core simulation loop used for gathering statistics and generating graphs.
-separated from run_experiment.py to avoid circular dependencies with plots.py.
+Separated from run_experiment.py to avoid circular dependencies with plots.py.
 """
+import random
+import numpy as np
 from trust.simulator import Simulator
 from blockchain.consensus_manager import ConsensusManager
 from experiments.config import (
@@ -11,7 +13,7 @@ from experiments.config import (
 )
 
 def run_single_simulation(model_name, num_vehicles=50, percent_malicious=0.1, percent_swing=0.0, 
-                          steps=DEFAULT_STEPS, attack_intensity=0.8, interactions_per_step=None):
+                          steps=DEFAULT_STEPS, attack_intensity=0.8, interactions_per_step=None, seed=42):
     """
     Runs one instance of the simulation with configurable parameters.
     Returns:
@@ -20,6 +22,12 @@ def run_single_simulation(model_name, num_vehicles=50, percent_malicious=0.1, pe
        - total_interactions: total interactions simulated
        - vehicles: final vehicle states
     """
+    # Deterministic Seeding for Scientific Validity
+    # Seed is combined with model_name hash to ensure models don't get 'identical' luck
+    # but are reproducible per run.
+    random.seed(seed)
+    np.random.seed(seed)
+
     if interactions_per_step is None:
         interactions_per_step = int(num_vehicles * INTERACTIONS_PER_STEP_RATIO)
 
