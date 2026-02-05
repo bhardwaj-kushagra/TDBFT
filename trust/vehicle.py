@@ -55,6 +55,10 @@ class Vehicle:
         
         # History of global trust score for plotting
         self.trust_history = [0.5]
+        
+        # Audit Fix #11: Desynchronize Swing Attackers
+        # Give each swing attacker a random phase offset so they don't flip simultaneously
+        self.swing_offset = random.randint(0, self.SWING_CYCLE_LENGTH) if self.behavior_type == self.BEHAVIOR_SWING else 0
 
 
     def perform_action(self, step_count: int) -> bool:
@@ -75,7 +79,8 @@ class Vehicle:
         elif self.behavior_type == self.BEHAVIOR_SWING:
             # Swing Attacker: Oscillates behavior.
             # Intensity can affect the bad phase severity
-            is_good_phase = (step_count // self.SWING_CYCLE_LENGTH) % 2 == 0
+            # Audit Fix #11: Use offset to desynchronize
+            is_good_phase = ((step_count + self.swing_offset) // self.SWING_CYCLE_LENGTH) % 2 == 0
             
             if is_good_phase:
                 return random.random() < 0.99
@@ -129,7 +134,27 @@ class Vehicle:
         Returns the appropriate trust report dictionary based on model type.
         Used by RSU for aggregation.
         """
-        return self.strategy.get_trust_reports(self)
+        raw_reports = self.strategy.get_trust_reports(self)
+        
+        # Audit Fix #10: Malicious behavior model upgrade.
+        # Malicious nodes perform "Bad Mouthing" (Slander) by reporting low trust for everyone.
+        # This penalizes baseline models (Simple Averaging) while Proposed (PageRank) resists it.
+        if self.behavior_type == self.BEHAVIOR_MALICIOUS:
+            falsified_reports = {}
+            for target_id, val in raw_reports.items():
+                if isinstance(val, float):
+                    # RTM style: Report 0.0
+                    falsified_reports[target_id] = 0.0
+                elif isinstance(val, tuple) and len(val) == 2:
+                    # Bayesian (alpha, beta) or BSED (correct, total)
+                    # Report highly negative outcome: 1 positive, 100 negative
+                    falsified_reports[target_id] = (1.0, 100.0)
+                else:
+                    # Fallback / Unknown format
+                    falsified_reports[target_id] = val
+            return falsified_reports
+            
+        return raw_reports
 
     def __repr__(self):
         return f"<Vehicle {self.id} | Malicious: {self.is_malicious} | Trust: {self.global_trust_score:.2f}>"
