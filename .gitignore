@@ -12,6 +12,7 @@ downloads/
 eggs/
 .eggs/
 ISSUES_AND_CORRECTIONS_AUDIT.md
+docs/GRAPH_ANALYSIS_AND_IMPROVEMENTS.md
 lib/
 lib64/
 parts/
@@ -47,6 +48,10 @@ coverage.xml
 
 # Environments
 .env
+
+# Results and Archives
+results/
+archive_result/
 .venv
 venv/
 ENV/
