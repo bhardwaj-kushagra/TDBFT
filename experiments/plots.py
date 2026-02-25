@@ -9,7 +9,22 @@ from experiments.config import (
     MODELS, COLORS, LINE_STYLES, LINE_WIDTHS, get_style, RESULTS_DIR
 )
 from experiments.benchmark import run_single_simulation
-from trust.simulator import Simulator 
+from trust.simulator import Simulator
+
+# ── Publication-quality global plotting profile ──────────────────────────────
+plt.rcParams.update({
+    "figure.dpi":       300,
+    "savefig.dpi":      300,
+    "figure.figsize":   (6, 4),
+    "font.size":        14,
+    "axes.titlesize":   18,
+    "axes.labelsize":   16,
+    "xtick.labelsize":  12,
+    "ytick.labelsize":  12,
+    "legend.fontsize":  10,
+    "lines.linewidth":  2,
+    "grid.alpha":       0.3,
+})
 
 def normalize_histories(vehicles):
     """
@@ -61,7 +76,7 @@ def plot_trust_evolution(vehicles, save_path="results/trust_evolution.png"):
     """
     norm_data = normalize_histories(vehicles)
     
-    plt.figure(figsize=(10, 6))
+    plt.figure()
     
     # Burn-in: Skip first 5 steps
     burn_in = 5
@@ -120,7 +135,7 @@ def plot_trust_evolution(vehicles, save_path="results/trust_evolution.png"):
     plt.grid(True, alpha=0.3)
     
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
-    plt.savefig(save_path)
+    plt.savefig(save_path, dpi=300, bbox_inches="tight")
     print(f"Plot saved to {save_path}")
     plt.close()
 
@@ -170,7 +185,7 @@ def plot_detection_metrics(vehicles, save_path="results/detection_metrics.png"):
         tprs.append(tpr)
         fprs.append(fpr)
         
-    plt.figure(figsize=(10, 6))
+    plt.figure()
     plt.plot(percentiles, tprs, label='Detection Rate (TPR)', color='blue')
     plt.plot(percentiles, fprs, label='False Positive Rate (FPR)', color='red', linestyle='--')
     
@@ -191,7 +206,7 @@ def plot_detection_metrics(vehicles, save_path="results/detection_metrics.png"):
     plt.grid(True)
     
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
-    plt.savefig(save_path)
+    plt.savefig(save_path, dpi=300, bbox_inches="tight")
     print(f"Plot saved to {save_path}")
     plt.close()
 
@@ -221,7 +236,7 @@ def plot_comparative_trust(vehicles, save_path="results/comparative_trust_normal
     mean_per_step = np.mean(step_data, axis=1)
     std_per_step = np.std(step_data, axis=1) + 1e-9
     
-    plt.figure(figsize=(10, 6))
+    plt.figure()
     burn_in = 5
     steps = np.arange(len(mean_per_step))
     
@@ -250,7 +265,7 @@ def plot_comparative_trust(vehicles, save_path="results/comparative_trust_normal
     plt.grid(True)
     
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
-    plt.savefig(save_path)
+    plt.savefig(save_path, dpi=300, bbox_inches="tight")
     print(f"Plot saved to {save_path}")
     plt.close()
 
@@ -278,7 +293,7 @@ def plot_final_trust_distribution(vehicles, save_path="results/final_rank_distri
     
     committee_size = 5
     
-    plt.figure(figsize=(12, 6))
+    plt.figure(figsize=(8, 4))  # Wider for rank axis readability
     plt.scatter(ranks, scores, c=colors, s=100, alpha=0.7)
     
     if len(data) >= committee_size:
@@ -294,7 +309,7 @@ def plot_final_trust_distribution(vehicles, save_path="results/final_rank_distri
     for i, txt in enumerate(ids):
         rank = i + 1
         if rank <= top_k or rank > (n_vehicles - bottom_k):
-             plt.annotate(txt, (ranks[i], scores[i]), fontsize=8, alpha=0.7)
+             plt.annotate(txt, (ranks[i], scores[i]), fontsize=10, alpha=0.7)
 
     plt.title("Vehicle Ranking & Committee Selection")
     plt.xlabel("Rank (1 = Highest Trust)")
@@ -307,7 +322,7 @@ def plot_final_trust_distribution(vehicles, save_path="results/final_rank_distri
     plt.grid(True, alpha=0.3)
     
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
-    plt.savefig(save_path)
+    plt.savefig(save_path, dpi=300, bbox_inches="tight")
     print(f"Plot saved to {save_path}")
     plt.close()
 
@@ -316,11 +331,11 @@ def plot_swing_analysis(global_history, local_history, save_path="results/swing_
     Graph 6: Swing Attacker Dynamics.
     "Label local trust as Bayesian... Label global trust as smoothed VehicleRank"
     """
-    plt.figure(figsize=(10, 6))
+    plt.figure()
     
     # Global history should already be normalized by caller (or here if we had context)
     # Assuming caller passes normalized trace
-    plt.plot(global_history, label='Global Trust (Smoothed VehicleRank)', color='purple', linewidth=2)
+    plt.plot(global_history, label='Global Trust (Smoothed VehicleRank)', color='purple')
     plt.plot(local_history, label='Local Trust (Bayesian Window=10)', color='orange', linestyle='-', alpha=0.8)
     
     plt.title("Swing Attacker Dynamics")
@@ -332,11 +347,11 @@ def plot_swing_analysis(global_history, local_history, save_path="results/swing_
     # Add text box
     textstr = "While swing attackers manipulate local trust,\ntheir global trust remains suppressed due to\ntemporal smoothing and network-wide propagation."
     props = dict(boxstyle='round', facecolor='wheat', alpha=0.2)
-    plt.text(0.05, 0.05, textstr, transform=plt.gca().transAxes, fontsize=9,
+    plt.text(0.05, 0.05, textstr, transform=plt.gca().transAxes, fontsize=10,
         verticalalignment='bottom', bbox=props)
     
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
-    plt.savefig(save_path)
+    plt.savefig(save_path, dpi=300, bbox_inches="tight")
     print(f"Plot saved to {save_path}")
     plt.close()
 
@@ -389,16 +404,16 @@ def plot_trust_convergence(vehicles, save_path="results/trust_convergence.png"):
         stability_fraction.append(frac)
         
     # 4. Plot
-    plt.figure(figsize=(10, 6))
+    plt.figure()
     
     burn_in = 5
     # Adjust plot steps if burn_in applies
     valid_indices = [i for i, s in enumerate(plot_steps) if s > burn_in]
     
     if valid_indices:
-        plt.plot([plot_steps[i] for i in valid_indices], [stability_fraction[i] for i in valid_indices], color='navy', linewidth=2)
+        plt.plot([plot_steps[i] for i in valid_indices], [stability_fraction[i] for i in valid_indices], color='navy')
     else:
-        plt.plot(plot_steps, stability_fraction, color='navy', linewidth=2)
+        plt.plot(plot_steps, stability_fraction, color='navy')
         
     plt.title(f"Trust Convergence Time\n(Stable Rank = change <= {threshold} positions)")
     plt.xlabel("Simulation Step")
@@ -407,7 +422,7 @@ def plot_trust_convergence(vehicles, save_path="results/trust_convergence.png"):
     plt.grid(True)
     
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
-    plt.savefig(save_path)
+    plt.savefig(save_path, dpi=300, bbox_inches="tight")
     print(f"Plot saved to {save_path}")
     plt.close()
 
@@ -470,8 +485,8 @@ def plot_dag_structure(dag, save_path="results/dag_structure.png"):
         for i, bid in enumerate(bids):
             y_coords[bid] = i - (n - 1) / 2.0
             
-    # 3. Plot
-    plt.figure(figsize=(12, 6))
+    # 3. Plot — wider figure for DAG readability
+    plt.figure(figsize=(8, 4))
     ax = plt.gca()
     
     # Draw Edges first
@@ -495,7 +510,7 @@ def plot_dag_structure(dag, save_path="results/dag_structure.png"):
     
     # Labels
     for bid in blocks:
-        ax.text(depths[bid], y_coords[bid], bid[:4], fontsize=8, ha='center', va='center', color='white', fontweight='bold', zorder=3)
+        ax.text(depths[bid], y_coords[bid], bid[:4], fontsize=10, ha='center', va='center', color='white', fontweight='bold', zorder=3)
         
     plt.title(f"DAG Structure (Height: {max_depth+1}, Blocks: {len(blocks)})")
     plt.xlabel("Layer (Temporal Depth)")
@@ -509,9 +524,8 @@ def plot_dag_structure(dag, save_path="results/dag_structure.png"):
         patches = [mpatches.Patch(color=cmap(val_map[v]), label=f'Val {v}') for v in validators]
         plt.legend(handles=patches, loc='upper left', bbox_to_anchor=(1, 1))
         
-    plt.tight_layout()
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
-    plt.savefig(save_path)
+    plt.savefig(save_path, dpi=300, bbox_inches="tight")
     print(f"Plot saved to {save_path}")
     plt.close()
 
@@ -522,7 +536,7 @@ def generate_graph_1(out_dir="results"):
     steps = 80
     interactions_per_step = 50
 
-    plt.figure(figsize=(10, 6))
+    plt.figure()
 
     for model in MODELS:
         res = run_single_simulation(
@@ -543,7 +557,7 @@ def generate_graph_1(out_dir="results"):
     plt.ylabel("Total Number of Malicious Vehicles Detected")
     plt.legend()
     plt.grid(True, alpha=0.3)
-    plt.savefig(f"{out_dir}/graph1_traffic_vs_detection.png")
+    plt.savefig(f"{out_dir}/graph1_traffic_vs_detection.png", dpi=300, bbox_inches="tight")
     plt.close()
 
 def generate_graph_2(out_dir="results"):
@@ -551,7 +565,7 @@ def generate_graph_2(out_dir="results"):
     print("Generating Graph 2...")
     ratios = [0.1, 0.2, 0.3]
     
-    fig, axes = plt.subplots(1, 3, figsize=(18, 5), sharey=True)
+    fig, axes = plt.subplots(1, 3, figsize=(8, 4), sharey=True)  # Compact 3-panel layout
     steps = 60
     
     for i, ratio in enumerate(ratios):
@@ -573,7 +587,7 @@ def generate_graph_2(out_dir="results"):
     handles, labels = axes[0].get_legend_handles_labels()
     fig.legend(handles, labels, loc='center right')
     plt.tight_layout(rect=(0, 0, 0.9, 1))
-    plt.savefig(f"{out_dir}/graph2_robustness_scenarios.png")
+    plt.savefig(f"{out_dir}/graph2_robustness_scenarios.png", dpi=300, bbox_inches="tight")
     plt.close()
 
 def generate_graph_3_and_4(out_dir="results"):
@@ -603,7 +617,7 @@ def generate_graph_3_and_4(out_dir="results"):
             results_capacity[model].append(capacity)
             
     # Graph 3: Line Plot
-    plt.figure(figsize=(10, 6))
+    plt.figure()
     for model in MODELS:
         plt.plot(sizes, results_capacity[model], **get_style(model))
     plt.title("Normalized Capacity Index vs Network Size")
@@ -611,11 +625,11 @@ def generate_graph_3_and_4(out_dir="results"):
     plt.ylabel("Capacity Index")
     plt.legend()
     plt.grid(True, alpha=0.3)
-    plt.savefig(f"{out_dir}/graph3_capacity_line.png")
+    plt.savefig(f"{out_dir}/graph3_capacity_line.png", dpi=300, bbox_inches="tight")
     plt.close()
     
     # Graph 4: Bar Chart
-    plt.figure(figsize=(12, 6))
+    plt.figure(figsize=(8, 4))  # Wider for grouped bars
     x = np.arange(len(sizes))
     width = 0.12 
     for i, model in enumerate(MODELS):
@@ -628,7 +642,7 @@ def generate_graph_3_and_4(out_dir="results"):
     plt.xticks(x, [str(size) for size in sizes])
     plt.legend()
     plt.grid(axis='y', alpha=0.3)
-    plt.savefig(f"{out_dir}/graph4_throughput_bar.png")
+    plt.savefig(f"{out_dir}/graph4_throughput_bar.png", dpi=300, bbox_inches="tight")
     plt.close()
 
     # Graph 4B: Analytical Confirmation Delay vs Network Size (New Feature)
@@ -679,7 +693,7 @@ def generate_graph_3_and_4(out_dir="results"):
             
             results_latency[model].append(lat)
 
-    plt.figure(figsize=(10, 6))
+    plt.figure()
     for model in MODELS:
         plt.plot(sizes, results_latency[model], marker='o', **get_style(model))
     
@@ -688,7 +702,7 @@ def generate_graph_3_and_4(out_dir="results"):
     plt.ylabel("Consensus Latency (ms)")
     plt.legend()
     plt.grid(True, alpha=0.3)
-    plt.savefig(f"{out_dir}/graph4b_latency_line.png")
+    plt.savefig(f"{out_dir}/graph4b_latency_line.png", dpi=300, bbox_inches="tight")
     plt.close()
 
 def generate_graph_5(out_dir="results"):
@@ -707,7 +721,7 @@ def generate_graph_5(out_dir="results"):
             rate = (failures / total_rounds) * 100
             res_success[model].append(rate)
 
-    plt.figure(figsize=(10, 6))
+    plt.figure()
     for model in MODELS:
         plt.plot(labels_x, res_success[model], **get_style(model))
     plt.title("Success Rate of Swing Attacks vs Attack Intensity")
@@ -715,7 +729,7 @@ def generate_graph_5(out_dir="results"):
     plt.ylabel("Attack Success Rate (%)")
     plt.legend()
     plt.grid(True, alpha=0.3)
-    plt.savefig(f"{out_dir}/graph5_swing_attack_success.png")
+    plt.savefig(f"{out_dir}/graph5_swing_attack_success.png", dpi=300, bbox_inches="tight")
     plt.close()
     return intensities, labels_x
 
@@ -733,7 +747,7 @@ def generate_graph_6(intensities, labels_x, out_dir="results"):
             rate = (failures / total) * 100
             res_success[model].append(rate)
             
-    plt.figure(figsize=(12, 6))
+    plt.figure(figsize=(8, 4))  # Wider for grouped bars
     x = np.arange(len(labels_x))
     width = 0.12
     for i, model in enumerate(MODELS):
@@ -746,14 +760,14 @@ def generate_graph_6(intensities, labels_x, out_dir="results"):
     plt.xticks(x, labels_x)
     plt.legend()
     plt.grid(axis='y', alpha=0.3)
-    plt.savefig(f"{out_dir}/graph6_internal_attack_bar.png")
+    plt.savefig(f"{out_dir}/graph6_internal_attack_bar.png", dpi=300, bbox_inches="tight")
     plt.close()
 
 def generate_graph_7(out_dir="results"):
     """Graph 7: Trust Convergence Stability"""
     print("Generating Graph 7...")
     steps = 100
-    plt.figure(figsize=(10, 6))
+    plt.figure()
     
     for model in MODELS:
         sim = Simulator(model_type=model, num_vehicles=50, percent_malicious=0.1)
@@ -790,7 +804,7 @@ def generate_graph_7(out_dir="results"):
     plt.ylabel("Fraction of Nodes with Stable Rank")
     plt.legend()
     plt.grid(True, alpha=0.3)
-    plt.savefig(f"{out_dir}/graph7_convergence_stability.png")
+    plt.savefig(f"{out_dir}/graph7_convergence_stability.png", dpi=300, bbox_inches="tight")
     plt.close()
 
 def run_paper_suite():
