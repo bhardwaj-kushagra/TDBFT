@@ -1,0 +1,360 @@
+%% ============================================================================
+%%   Trust-DBFT Authentication & Key Agreement Protocol
+%%   AVISPA/HLPSL Model (High Level Protocol Specification Language)
+%% ============================================================================
+%%
+%%   System:     IoV Trust Management with Trust-DBFT Consensus
+%%   Attacker:   Dolev-Yao (bounded sessions, OFMC/CL-AtSe/SATMC backends)
+%%   Scenario:   2 vehicles, 1 RSU, bounded sessions
+%%
+%%   Protocol narration (same as Scyther model):
+%%
+%%   P1. Vehicle-RSU Mutual Authentication & Session Key
+%%       Vi  -> RSU :  { Vi, Ni, Ts }_pk(RSU)
+%%       RSU -> Vi  :  { RSU, Ni, Nr, SK }_pk(Vi)
+%%       Vi  -> RSU :  { Nr }_SK
+%%
+%%   P2. Authenticated Trust Report
+%%       Vi  -> RSU :  { Vi, Report, Nt, {Vi,Report,Nt}_inv(pk(Vi)) }_SK
+%%       RSU -> Vi  :  { RSU, Nt }_SK
+%%
+%%   P3. Trust-DBFT Consensus Voting
+%%       RSU -> Vj  :  { CList, Proposal, Nc }_pk(Vj)
+%%       Vj  -> RSU :  { Vj, Vote, Nc, {Vj,Vote,Nc}_inv(pk(Vj)) }_SK_j
+%%       RSU -> Vj  :  { Decision, BHash, Nc }_inv(pk(RSU))
+%%
+%% ============================================================================
+
+
+%% ============================== ROLE: VEHICLE ==============================
+%% Models a legitimate vehicle in the IoV network.
+%% Executes all three sub-protocols sequentially.
+%% ============================================================================
+
+role role_Vehicle(
+    Vi, RSU_id: agent,
+    PKi:        public_key,     %% Vehicle's public key
+    PKrsu:      public_key,     %% RSU's public key
+    SND, RCV:   channel(dy)     %% Dolev-Yao channels
+)
+played_by Vi def=
+
+    local
+        State:      nat,
+
+        %% P1 variables
+        Ni:         text,
+        Ts:         text,
+        Nr:         text,
+        SK:         symmetric_key,
+
+        %% P2 variables
+        Nt:         text,
+        Report:     text,
+
+        %% P3 variables
+        CList:      text,
+        Proposal:   text,
+        Nc:         text,
+        MyVote:     text,
+        Decision_v: text,
+        BHash:      text
+
+    init State := 0
+
+    transition
+
+    %% ======================== P1: AUTHENTICATION ==========================
+
+    %% Step 0 -> 1:  Vehicle sends authentication request
+    %%   Vi -> RSU :  { Vi, Ni, Ts }_{PKrsu}
+    0. State  = 0
+       /\ RCV(start)
+       =|>
+       State' := 1
+       /\ Ni'  := new()
+       /\ Ts'  := new()
+       /\ SND({Vi.Ni'.Ts'}_PKrsu)
+       /\ secret(Ni', sec_ni, {Vi, RSU_id})
+       /\ witness(Vi, RSU_id, auth_vi_ni, Ni')
+
+    %% Step 1 -> 2:  Vehicle receives auth response, sends key confirmation
+    %%   RSU -> Vi :  { RSU_id, Ni, Nr, SK }_{PKi}
+    %%   Vi  -> RSU:  { Nr }_{SK}
+    1. State  = 1
+       /\ RCV({RSU_id.Ni.Nr'.SK'}_PKi)
+       =|>
+       State' := 2
+       /\ SND({Nr'}_SK')
+       /\ secret(SK', sec_sk, {Vi, RSU_id})
+       /\ request(Vi, RSU_id, auth_rsu_nr, Nr')
+
+    %% ================ P2: TRUST REPORT SUBMISSION =========================
+
+    %% Step 2 -> 3:  Vehicle submits authenticated trust report
+    %%   Vi -> RSU :  { Vi, Report, Nt, {Vi.Report.Nt}_{inv(PKi)} }_{SK}
+    2. State  = 2
+       =|>
+       State' := 3
+       /\ Nt'     := new()
+       /\ Report' := new()
+       /\ SND({Vi.Report'.Nt'.{Vi.Report'.Nt'}_inv(PKi)}_SK)
+       /\ secret(Report', sec_report, {Vi, RSU_id})
+       /\ witness(Vi, RSU_id, auth_vi_nt, Nt')
+
+    %% Step 3 -> 4:  Vehicle receives report acknowledgement
+    %%   RSU -> Vi :  { RSU_id, Nt }_{SK}
+    3. State  = 3
+       /\ RCV({RSU_id.Nt}_SK)
+       =|>
+       State' := 4
+       /\ request(Vi, RSU_id, auth_rsu_nt_ack, Nt)
+
+    %% ================ P3: CONSENSUS VOTING ================================
+
+    %% Step 4 -> 5:  Vehicle receives committee proposal
+    %%   RSU -> Vj :  { CList, Proposal, Nc }_{PKi}
+    4. State  = 4
+       /\ RCV({CList'.Proposal'.Nc'}_PKi)
+       =|>
+       State' := 5
+       /\ MyVote' := new()
+       /\ SND({Vi.MyVote'.Nc'.{Vi.MyVote'.Nc'}_inv(PKi)}_SK)
+       /\ secret(MyVote', sec_vote, {Vi, RSU_id})
+       /\ witness(Vi, RSU_id, auth_vj_vote, MyVote')
+
+    %% Step 5 -> 6:  Vehicle receives final decision
+    %%   RSU -> Vj :  { Decision, BHash, Nc }_{inv(PKrsu)}
+    5. State  = 5
+       /\ RCV({Decision_v'.BHash'.Nc}_inv(PKrsu))
+       =|>
+       State' := 6
+       /\ request(Vi, RSU_id, auth_rsu_decision, Nc)
+
+end role
+
+
+%% ============================== ROLE: RSU =================================
+%% Models a Roadside Unit in the IoV infrastructure.
+%% Acts as the trust aggregator + consensus primary/leader.
+%% ============================================================================
+
+role role_RSU(
+    Vi, RSU_id: agent,
+    PKi:        public_key,     %% Vehicle's public key
+    PKrsu:      public_key,     %% RSU's own public key
+    SND, RCV:   channel(dy)     %% Dolev-Yao channels
+)
+played_by RSU_id def=
+
+    local
+        State:      nat,
+
+        %% P1 variables
+        Ni:         text,
+        Ts:         text,
+        Nr:         text,
+        SK:         symmetric_key,
+
+        %% P2 variables
+        Nt:         text,
+        Report:     text,
+
+        %% P3 variables
+        CList:      text,
+        Proposal:   text,
+        Nc:         text,
+        Vote_v:     text,
+        Decision_r: text,
+        BHash:      text
+
+    init State := 0
+
+    transition
+
+    %% ======================== P1: AUTHENTICATION ==========================
+
+    %% Step 0 -> 1:  RSU receives auth request, sends response with SK
+    %%   Vi  -> RSU :  { Vi, Ni, Ts }_{PKrsu}
+    %%   RSU -> Vi  :  { RSU_id, Ni, Nr, SK }_{PKi}
+    0. State  = 0
+       /\ RCV({Vi.Ni'.Ts'}_PKrsu)
+       =|>
+       State' := 1
+       /\ Nr'  := new()
+       /\ SK'  := new()
+       /\ SND({RSU_id.Ni'.Nr'.SK'}_PKi)
+       /\ secret(SK', sec_sk, {Vi, RSU_id})
+       /\ secret(Nr', sec_nr, {Vi, RSU_id})
+       /\ witness(RSU_id, Vi, auth_rsu_nr, Nr')
+
+    %% Step 1 -> 2:  RSU receives key confirmation
+    %%   Vi -> RSU :  { Nr }_{SK}
+    1. State  = 1
+       /\ RCV({Nr}_SK)
+       =|>
+       State' := 2
+       /\ request(RSU_id, Vi, auth_vi_ni, Ni)
+
+    %% ================ P2: TRUST REPORT SUBMISSION =========================
+
+    %% Step 2 -> 3:  RSU receives trust report, verifies signature, sends ACK
+    %%   Vi -> RSU :  { Vi, Report, Nt, {Vi.Report.Nt}_{inv(PKi)} }_{SK}
+    %%   RSU -> Vi :  { RSU_id, Nt }_{SK}
+    2. State  = 2
+       /\ RCV({Vi.Report'.Nt'.{Vi.Report'.Nt'}_inv(PKi)}_SK)
+       =|>
+       State' := 3
+       /\ SND({RSU_id.Nt'}_SK)
+       /\ secret(Report', sec_report, {Vi, RSU_id})
+       /\ witness(RSU_id, Vi, auth_rsu_nt_ack, Nt')
+       /\ request(RSU_id, Vi, auth_vi_nt, Nt')
+
+    %% ================ P3: CONSENSUS VOTING ================================
+
+    %% Step 3 -> 4:  RSU sends committee proposal
+    %%   RSU -> Vj :  { CList, Proposal, Nc }_{PKi}
+    3. State  = 3
+       =|>
+       State' := 4
+       /\ CList'    := new()
+       /\ Proposal' := new()
+       /\ Nc'       := new()
+       /\ SND({CList'.Proposal'.Nc'}_PKi)
+       /\ secret(Proposal', sec_proposal, {Vi, RSU_id})
+       /\ witness(RSU_id, Vi, auth_rsu_decision, Nc')
+
+    %% Step 4 -> 5:  RSU receives vote, broadcasts decision
+    %%   Vj  -> RSU :  { Vj, Vote, Nc, {Vj.Vote.Nc}_{inv(PKi)} }_{SK}
+    %%   RSU -> Vj  :  { Decision, BHash, Nc }_{inv(PKrsu)}
+    4. State  = 4
+       /\ RCV({Vi.Vote_v'.Nc.{Vi.Vote_v'.Nc}_inv(PKi)}_SK)
+       =|>
+       State' := 5
+       /\ Decision_r' := new()
+       /\ BHash'      := new()
+       /\ SND({Decision_r'.BHash'.Nc}_inv(PKrsu))
+       /\ secret(Vote_v', sec_vote, {Vi, RSU_id})
+       /\ request(RSU_id, Vi, auth_vj_vote, Vote_v')
+
+end role
+
+
+%% ============================== SESSION ===================================
+%% Binds one vehicle and one RSU into a protocol session.
+%% ============================================================================
+
+role session(
+    Vi, RSU_id: agent,
+    PKi:        public_key,
+    PKrsu:      public_key
+)
+def=
+
+    local
+        SVi, RVi, SRSU, RRSU: channel(dy)
+
+    composition
+        role_Vehicle(Vi, RSU_id, PKi, PKrsu, SVi, RVi)
+     /\ role_RSU(Vi, RSU_id, PKi, PKrsu, SRSU, RRSU)
+
+end role
+
+
+%% ============================== ENVIRONMENT ===============================
+%% Top-level scenario: two honest sessions + attacker knowledge.
+%% The intruder (i) knows all public keys and has its own key pair.
+%% ============================================================================
+
+role environment()
+def=
+
+    const
+        %% Agents
+        vehicle_a, vehicle_b, rsu_node: agent,
+
+        %% Public keys
+        pka, pkb, pkrsu, pki: public_key,
+
+        %% Protocol IDs for authentication goals
+        auth_vi_ni, auth_rsu_nr,
+        auth_vi_nt, auth_rsu_nt_ack,
+        auth_vj_vote, auth_rsu_decision: protocol_id,
+
+        %% Secrecy goal constants
+        sec_sk, sec_ni, sec_nr,
+        sec_report, sec_vote, sec_proposal: protocol_id
+
+    intruder_knowledge = {
+        vehicle_a, vehicle_b, rsu_node,
+        pka, pkb, pkrsu, pki,
+        inv(pki)
+    }
+
+    composition
+        %% Session 1: vehicle_a authenticates with rsu_node
+        session(vehicle_a, rsu_node, pka, pkrsu)
+
+        %% Session 2: vehicle_b authenticates with rsu_node
+     /\ session(vehicle_b, rsu_node, pkb, pkrsu)
+
+        %% Session 3: intruder impersonating vehicle_a with rsu_node
+     /\ session(i, rsu_node, pki, pkrsu)
+
+        %% Session 4: vehicle_a with intruder impersonating rsu_node
+     /\ session(vehicle_a, i, pka, pki)
+
+end role
+
+
+%% ============================== GOALS =====================================
+%% Security properties to verify.
+%% ============================================================================
+
+goal
+
+    %% ---------- Secrecy Goals ----------
+    %% Session key must be secret between vehicle and RSU
+    secrecy_of sec_sk
+
+    %% Vehicle nonce must be secret
+    secrecy_of sec_ni
+
+    %% RSU nonce must be secret
+    secrecy_of sec_nr
+
+    %% Trust reports must be confidential
+    secrecy_of sec_report
+
+    %% Consensus votes must be confidential
+    secrecy_of sec_vote
+
+    %% Block proposal must be confidential before broadcast
+    secrecy_of sec_proposal
+
+
+    %% ---------- Authentication Goals ----------
+    %% RSU authenticates vehicle via Ni (P1)
+    authentication_on auth_vi_ni
+
+    %% Vehicle authenticates RSU via Nr (P1)
+    authentication_on auth_rsu_nr
+
+    %% RSU authenticates vehicle's trust report via Nt (P2)
+    authentication_on auth_vi_nt
+
+    %% Vehicle authenticates RSU's report ACK (P2)
+    authentication_on auth_rsu_nt_ack
+
+    %% RSU authenticates committee member's vote (P3)
+    authentication_on auth_vj_vote
+
+    %% Committee member authenticates RSU's decision (P3)
+    authentication_on auth_rsu_decision
+
+end goal
+
+
+%% ============================== ENVIRONMENT ENTRY =========================
+
+environment()
