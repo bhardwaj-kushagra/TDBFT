@@ -17,7 +17,7 @@ plt.rcParams.update({
     "savefig.dpi":      300,
     "figure.figsize":   (6, 4),
     "font.size":        14,
-    "axes.titlesize":   18,
+    "axes.titlesize":   16,
     "axes.labelsize":   16,
     "xtick.labelsize":  12,
     "ytick.labelsize":  12,
