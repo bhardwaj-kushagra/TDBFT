@@ -1,7 +1,48 @@
 """
-Plotting Utilities. (Refactored for Statistical Rigor)
+Plotting Utilities for IoV Trust Management Prototype.
+
+All graphs are saved to a single flat output directory (RESULTS_DIR = results/).
+No subfolders, no supplementary directories. One call to run_all_graphs() regenerates everything.
+
+Naming convention (strictly enforced):
+  - comp_*       : Comparative plots — all 7 models overlaid
+  - proposed_*   : Solo plots for the PROPOSED model only
+  - dag_*        : Structural visualisations (DAG topology)
+
+Complete output manifest (22 files):
+──────────────────────────────────────
+  COMPARATIVE (15 files):
+    comp_traffic_detection.png        — IoV traffic volume vs malicious detection
+    comp_robustness_10.png            — Robustness at 10% attacker ratio
+    comp_robustness_20.png            — Robustness at 20% attacker ratio
+    comp_robustness_30.png            — Robustness at 30% attacker ratio
+    comp_capacity.png                 — Normalised capacity index (line)
+    comp_throughput.png               — Capacity index bar chart
+    comp_latency.png                  — Analytical consensus latency
+    comp_swing_attack.png             — Swing attack success rate (line)
+    comp_internal_attack.png          — Internal attack success rate (bar)
+    comp_convergence.png              — Rank convergence stability
+    comp_consensus.png                — Consensus success rate vs network size
+    comp_detection_tpr.png            — Detection TPR at 30th-percentile
+    comp_trust_evolution.png          — Median honest trust evolution
+    comp_trust_evolution_malicious.png — Median malicious trust evolution
+    comp_trust_normalized.png         — Z-score trust separation
+
+  PROPOSED SOLO (6 files):
+    proposed_trust_evolution.png      — Per-vehicle trust traces + medians
+    proposed_detection_metrics.png    — TPR / FPR across percentiles
+    proposed_rank_distribution.png    — Final rank scatter + committee cutoff
+    proposed_trust_convergence.png    — Rank stability fraction over time
+    proposed_trust_normalized.png     — Z-score by behavior category
+    proposed_swing_analysis.png       — Swing attacker: global vs local trust
+
+  STRUCTURAL (1 file):
+    dag_structure.png                 — DAG topology from short PROPOSED run
+──────────────────────────────────────
 """
 import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
+from matplotlib.lines import Line2D
 import numpy as np
 import os
 
@@ -10,6 +51,7 @@ from experiments.config import (
 )
 from experiments.benchmark import run_single_simulation
 from trust.simulator import Simulator
+from blockchain.consensus_manager import ConsensusManager
 
 # ── Publication-quality global plotting profile ──────────────────────────────
 plt.rcParams.update({
@@ -26,871 +68,837 @@ plt.rcParams.update({
     "grid.alpha":       0.3,
 })
 
+# ── Helpers ──────────────────────────────────────────────────────────────────
+
+def _save(fig, path):
+    """Ensure directory exists, save figure, print confirmation, close."""
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    fig.savefig(path, dpi=300, bbox_inches="tight")
+    print(f"  [saved] {path}")
+    plt.close(fig)
+
+
 def normalize_histories(vehicles):
     """
-    Normalizes trust scores per time step using Min-Max normalization.
-    Returns:
-        dict: {vid: np.array(normalized_history)}
+    Per-step Min-Max normalisation of trust histories.
+    Returns dict {vid: np.array} of normalised traces.
     """
     if not vehicles:
         return {}
-    
-    # Check length
     sample_v = next(iter(vehicles.values()))
     n_steps = len(sample_v.trust_history)
-    
-    # 1. Gather Matrix: (Steps, Vehicles)
-    # maintain consistent order
     vids = list(vehicles.keys())
-    raw_matrix = np.zeros((n_steps, len(vids)))
-    
+    raw = np.zeros((n_steps, len(vids)))
     for i, vid in enumerate(vids):
-        hist = vehicles[vid].trust_history
-        # Truncate or pad if mismatch (shouldn't happen in sync sim)
-        length = min(len(hist), n_steps) 
-        raw_matrix[:length, i] = hist[:length]
-        
-    # 2. Normalize per Step (Row-wise)
-    norm_matrix = np.zeros_like(raw_matrix)
-    
+        h = vehicles[vid].trust_history
+        length = min(len(h), n_steps)
+        raw[:length, i] = h[:length]
+    norm = np.zeros_like(raw)
     for t in range(n_steps):
-        row = raw_matrix[t, :]
-        rmin, rmax = np.min(row), np.max(row)
+        row = raw[t, :]
+        rmin, rmax = row.min(), row.max()
         if rmax > rmin:
-            norm_matrix[t, :] = (row - rmin) / (rmax - rmin + 1e-9)
+            norm[t, :] = (row - rmin) / (rmax - rmin + 1e-9)
         else:
-            norm_matrix[t, :] = 0.5 # Default if all equal
-            
-    # 3. Distribute back
-    normalized_data = {}
-    for i, vid in enumerate(vids):
-        normalized_data[vid] = norm_matrix[:, i]
-        
-    return normalized_data
+            norm[t, :] = 0.5
+    return {vid: norm[:, i] for i, vid in enumerate(vids)}
 
-def plot_trust_evolution(vehicles, save_path="results/trust_evolution.png"):
-    """
-    Plots the history of global trust scores (Normalized).
-    Graph 1 Fix: Plot t_norm. Honest vs Malicious. Percentile lines.
-    "Since VehicleRank produces relative trust scores... global trust values are min-max normalized..."
-    """
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  PROPOSED-SOLO PLOTS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def plot_proposed_trust_evolution(vehicles, out_dir):
+    """Honest vs malicious trust traces with median trend lines (PROPOSED only)."""
     norm_data = normalize_histories(vehicles)
-    
-    plt.figure()
-    
-    # Burn-in: Skip first 5 steps
+    fig, ax = plt.subplots()
     burn_in = 5
-    
-    all_final_scores = []
-    
     for vid, v in vehicles.items():
-        if vid not in norm_data: continue
-        
-        full_hist = norm_data[vid]
-        if len(full_hist) <= burn_in: continue
-        
-        history = full_hist[burn_in:]
-        steps = range(burn_in, burn_in + len(history))
-        
-        color = 'red' if v.is_malicious else 'green'
-        alpha = 0.15 if v.is_malicious else 0.1 # Lighter for individual traces
-        
-        plt.plot(steps, history, color=color, alpha=alpha, label='_nolegend_')
-        all_final_scores.append(history[-1])
+        if vid not in norm_data:
+            continue
+        h = norm_data[vid]
+        if len(h) <= burn_in:
+            continue
+        seg = h[burn_in:]
+        xs = range(burn_in, burn_in + len(seg))
+        c = 'red' if v.is_malicious else 'green'
+        ax.plot(xs, seg, color=c, alpha=0.12, label='_nolegend_')
 
-    # Add Percentile Trends (Median of Honest vs Median of Malicious?)
-    # Or just population percentiles. 
-    # Let's plot the MEDIAN trend line for Honest vs Malicious to show separation clearly.
-    
-    vids = list(vehicles.keys())
     if norm_data:
         n_steps = len(next(iter(norm_data.values())))
-        steps = range(burn_in, n_steps)
-        
+        xs = range(burn_in, n_steps)
         honest_ids = [v.id for v in vehicles.values() if not v.is_malicious]
         mal_ids = [v.id for v in vehicles.values() if v.is_malicious]
-        
-        honest_matrix = np.array([norm_data[uid] for uid in honest_ids])
-        mal_matrix = np.array([norm_data[uid] for uid in mal_ids])
-        
-        if honest_matrix.shape[0] > 0:
-            h_median = np.median(honest_matrix, axis=0)[burn_in:]
-            plt.plot(steps, h_median, color='darkgreen', linewidth=2, label='Honest Median')
-            
-        if mal_matrix.shape[0] > 0:
-            m_median = np.median(mal_matrix, axis=0)[burn_in:]
-            plt.plot(steps, m_median, color='darkred', linewidth=2, label='Malicious Median')
-            
-        # Top 30% cutoff line (approximate from last step)
-        # Actually, let's plot the Top 30% threshold over time
-        all_matrix = np.array([norm_data[uid] for uid in vids])
-        p70_trend = np.percentile(all_matrix, 70, axis=0)[burn_in:]
-        plt.plot(steps, p70_trend, color='blue', linestyle='--', label='Top 30% (Committee Cutoff)')
+        if honest_ids:
+            h_med = np.median([norm_data[uid] for uid in honest_ids], axis=0)[burn_in:]
+            ax.plot(xs, h_med, color='darkgreen', linewidth=2, label='Honest Median')
+        if mal_ids:
+            m_med = np.median([norm_data[uid] for uid in mal_ids], axis=0)[burn_in:]
+            ax.plot(xs, m_med, color='darkred', linewidth=2, label='Malicious Median')
+        all_mat = np.array([norm_data[uid] for uid in vehicles.keys()])
+        p70 = np.percentile(all_mat, 70, axis=0)[burn_in:]
+        ax.plot(xs, p70, color='blue', linestyle='--', label='Top 30% (Committee Cutoff)')
 
-    plt.ylim(0, 1.05)
-    plt.title("Evolution of Global Trust Scores (Normalized)")
-    plt.xlabel("Simulation Step")
-    plt.ylabel("Normalized Trust Score")
-    plt.legend(loc='upper left')
-    plt.grid(True, alpha=0.3)
-    
-    os.makedirs(os.path.dirname(save_path), exist_ok=True)
-    plt.savefig(save_path, dpi=300, bbox_inches="tight")
-    print(f"Plot saved to {save_path}")
-    plt.close()
+    ax.set_ylim(0, 1.05)
+    ax.set_title("Evolution of Global Trust Scores (Normalised)")
+    ax.set_xlabel("Simulation Step")
+    ax.set_ylabel("Normalised Trust Score")
+    ax.legend(loc='upper left')
+    ax.grid(True, alpha=0.3)
+    _save(fig, os.path.join(out_dir, "proposed_trust_evolution.png"))
 
-def plot_detection_metrics(vehicles, save_path="results/detection_metrics.png"):
-    """
-    Plots Detection Performance across Trust Percentiles.
-    Graph 3 Fix: X-axis = Trust Percentile (0-100).
-    "Detection performance is evaluated across trust percentiles..."
-    """
-    # Use normalized scores from final step
+
+def plot_proposed_detection_metrics(vehicles, out_dir):
+    """Detection TPR / FPR across trust percentiles (PROPOSED only)."""
     norm_data = normalize_histories(vehicles)
-    
-    # Gather (score, is_maliciuos)
-    data_points = []
+    pts = []
     for vid, v in vehicles.items():
         if vid in norm_data:
-            final_score = norm_data[vid][-1]
-            data_points.append({'score': final_score, 'is_mal': v.is_malicious})
-            
-    if not data_points: return
-    
-    # Sort by score ascending
-    data_points.sort(key=lambda x: x['score'])
-    scores = [x['score'] for x in data_points]
-    
-    total_malicious = sum(1 for x in data_points if x['is_mal'])
-    total_honest = len(data_points) - total_malicious
-    
-    tprs = []
-    fprs = []
+            pts.append({'score': norm_data[vid][-1], 'is_mal': v.is_malicious})
+    if not pts:
+        return
+    pts.sort(key=lambda x: x['score'])
+    scores = [x['score'] for x in pts]
+    total_mal = sum(1 for x in pts if x['is_mal'])
+    total_hon = len(pts) - total_mal
     percentiles = np.linspace(0, 100, 100)
-    
+    tprs, fprs = [], []
     for p in percentiles:
-        # Threshold at p-th percentile
         thresh = np.percentile(scores, p)
-        
-        # Predicted Malicious if score < thresh
-        # (Low trust = Malicious)
-        
-        # Count stats
-        tp = sum(1 for x in data_points if x['score'] < thresh and x['is_mal'])
-        fp = sum(1 for x in data_points if x['score'] < thresh and not x['is_mal'])
-        
-        tpr = tp / total_malicious if total_malicious > 0 else 0
-        fpr = fp / total_honest if total_honest > 0 else 0
-        
-        tprs.append(tpr)
-        fprs.append(fpr)
-        
-    plt.figure()
-    plt.plot(percentiles, tprs, label='Detection Rate (TPR)', color='blue')
-    plt.plot(percentiles, fprs, label='False Positive Rate (FPR)', color='red', linestyle='--')
-    
-    # Mark "Median of Bottom 30%"
-    # 30th percentile is x=30
-    idx_30 = 30 # roughly index 30 in linspace(0,100,100)
+        tp = sum(1 for x in pts if x['score'] < thresh and x['is_mal'])
+        fp = sum(1 for x in pts if x['score'] < thresh and not x['is_mal'])
+        tprs.append(tp / total_mal if total_mal else 0)
+        fprs.append(fp / total_hon if total_hon else 0)
+
+    fig, ax = plt.subplots()
+    ax.plot(percentiles, tprs, label='Detection Rate (TPR)', color='blue')
+    ax.plot(percentiles, fprs, label='False Positive Rate (FPR)', color='red', linestyle='--')
+    idx_30 = 30
     if idx_30 < len(tprs):
-        plt.axvline(x=30, color='green', linestyle=':', label='Bottom 30% Threshold')
-        plt.annotate(f'TPR={tprs[idx_30]:.2f}', 
-                     xy=(30, tprs[idx_30]), 
-                     xytext=(35, tprs[idx_30]-0.15),
-                     arrowprops=dict(facecolor='black', shrink=0.05))
+        ax.axvline(x=30, color='green', linestyle=':', label='Bottom 30% Threshold')
+        ax.annotate(f'TPR={tprs[idx_30]:.2f}', xy=(30, tprs[idx_30]),
+                    xytext=(35, tprs[idx_30] - 0.15),
+                    arrowprops=dict(facecolor='black', shrink=0.05))
+    ax.set_title("Detection Performance vs Trust Percentile")
+    ax.set_xlabel("Trust Threshold (Percentile)")
+    ax.set_ylabel("Rate")
+    ax.legend()
+    ax.grid(True)
+    _save(fig, os.path.join(out_dir, "proposed_detection_metrics.png"))
 
-    plt.title("Detection Performance vs Trust Percentile")
-    plt.xlabel("Trust Threshold (Percentile)")
-    plt.ylabel("Rate")
-    plt.legend()
-    plt.grid(True)
-    
-    os.makedirs(os.path.dirname(save_path), exist_ok=True)
-    plt.savefig(save_path, dpi=300, bbox_inches="tight")
-    print(f"Plot saved to {save_path}")
-    plt.close()
 
-def plot_comparative_trust(vehicles, save_path="results/comparative_trust_normalized.png"):
-    """
-    Graph 2: Normalized Trust Difference (Z-Score)
-    "Z-score is computed on t_norm... Mention cold start explicitly."
-    """
+def plot_proposed_rank_distribution(vehicles, out_dir):
+    """Final vehicle ranking scatter with committee cutoff (PROPOSED only)."""
     norm_data = normalize_histories(vehicles)
-    if not norm_data: return
-
-    # Group histories
-    histories = {'HONEST': [], 'MALICIOUS': [], 'SWING': []}
-    
-    for vid, v in vehicles.items():
-        if vid in norm_data:
-            histories[v.behavior_type].append(norm_data[vid])
-
-    # Calc global stats per step
-    all_hists = np.array(list(norm_data.values())) # (N_vehicles, N_steps) - wait, dict values order?
-    # Better:
-    all_hists = np.array([norm_data[uid] for uid in vehicles.keys()])
-    
-    # Transpose to (Steps, Vehicles) for step-wise stats
-    step_data = all_hists.T 
-    
-    mean_per_step = np.mean(step_data, axis=1)
-    std_per_step = np.std(step_data, axis=1) + 1e-9
-    
-    plt.figure()
-    burn_in = 5
-    steps = np.arange(len(mean_per_step))
-    
-    # Plot Z-scores
-    for cat, lists in histories.items():
-        if not lists: continue
-        
-        # Average trust of this group at each step
-        group_matrix = np.array(lists).T # (Steps, GroupSize)
-        group_avg = np.mean(group_matrix, axis=1)
-        
-        # Z-score of the GROUP AVERAGE relative to GLOBAL dist
-        # z = (GroupMean - GlobalMean) / GlobalStd
-        z_scores = (group_avg - mean_per_step) / std_per_step
-        
-        # Apply burn-in for plotting
-        plt.plot(steps[burn_in:], z_scores[burn_in:], label=f'{cat} (Z-Score)', markevery=10)
-
-    plt.axhline(0, color='black', linestyle='--', alpha=0.5)
-    plt.fill_between(steps[burn_in:], -1, 1, color='gray', alpha=0.2, label='±1 Std Dev')
-
-    plt.title("Normalized Trust Difference (Z-Score)\n(First 5 steps omitted for cold-start)")
-    plt.xlabel("Simulation Step")
-    plt.ylabel("Z-Score (Std Devs from Global Mean)")
-    plt.legend()
-    plt.grid(True)
-    
-    os.makedirs(os.path.dirname(save_path), exist_ok=True)
-    plt.savefig(save_path, dpi=300, bbox_inches="tight")
-    print(f"Plot saved to {save_path}")
-    plt.close()
-
-def plot_final_trust_distribution(vehicles, save_path="results/final_rank_distribution.png"):
-    """
-    Graph 4 Fix: Label Y-axis as Normalized Global Trust.
-    Committee is Top-k ranks.
-    """
-    norm_data = normalize_histories(vehicles)
-    
-    # Build list of (vid, score, is_mal)
     data = []
     for vid, v in vehicles.items():
         if vid in norm_data:
-            score = norm_data[vid][-1] # Final step
-            data.append((v, score))
-            
-    # Sort by score desc (Rank 1 is highest score)
+            data.append((v, norm_data[vid][-1]))
     data.sort(key=lambda x: x[1], reverse=True)
-    
     ranks = range(1, len(data) + 1)
     scores = [x[1] for x in data]
     colors = ['red' if x[0].is_malicious else 'green' for x in data]
     ids = [x[0].id for x in data]
-    
     committee_size = 5
-    
-    plt.figure(figsize=(8, 4))  # Wider for rank axis readability
-    plt.scatter(ranks, scores, c=colors, s=100, alpha=0.7)
-    
+
+    fig, ax = plt.subplots(figsize=(8, 4))
+    ax.scatter(ranks, scores, c=colors, s=100, alpha=0.7)
     if len(data) >= committee_size:
-        plt.axvline(x=committee_size + 0.5, color='blue', linestyle='--', label='Committee Cutoff')
-        # Threshold at cutoff
-        cutoff = scores[committee_size-1]
-        plt.axhline(y=cutoff, color='gray', linestyle=':', alpha=0.5)
-
-    # Label top-k and bottom-k
-    top_k, bottom_k = 5, 5
-    n_vehicles = len(data)
-    
+        ax.axvline(x=committee_size + 0.5, color='blue', linestyle='--', label='Committee Cutoff')
+        ax.axhline(y=scores[committee_size - 1], color='gray', linestyle=':', alpha=0.5)
+    top_k = bottom_k = 5
+    n_v = len(data)
     for i, txt in enumerate(ids):
-        rank = i + 1
-        if rank <= top_k or rank > (n_vehicles - bottom_k):
-             plt.annotate(txt, (ranks[i], scores[i]), fontsize=10, alpha=0.7)
+        if (i + 1) <= top_k or (i + 1) > (n_v - bottom_k):
+            ax.annotate(txt, (ranks[i], scores[i]), fontsize=10, alpha=0.7)
+    ax.set_title("Vehicle Ranking & Committee Selection")
+    ax.set_xlabel("Rank (1 = Highest Trust)")
+    ax.set_ylabel("Normalised Global Trust (VehicleRank)")
+    custom = [Line2D([0], [0], color='green', marker='o', linestyle=''),
+              Line2D([0], [0], color='red', marker='o', linestyle='')]
+    ax.legend(custom, ['Honest', 'Malicious'])
+    ax.grid(True, alpha=0.3)
+    _save(fig, os.path.join(out_dir, "proposed_rank_distribution.png"))
 
-    plt.title("Vehicle Ranking & Committee Selection")
-    plt.xlabel("Rank (1 = Highest Trust)")
-    plt.ylabel("Normalized Global Trust (VehicleRank)")
-    
-    from matplotlib.lines import Line2D
-    custom_lines = [Line2D([0], [0], color='green', marker='o', linestyle=''),
-                    Line2D([0], [0], color='red', marker='o', linestyle='')]
-    plt.legend(custom_lines, ['Honest', 'Malicious'])
-    plt.grid(True, alpha=0.3)
-    
-    os.makedirs(os.path.dirname(save_path), exist_ok=True)
-    plt.savefig(save_path, dpi=300, bbox_inches="tight")
-    print(f"Plot saved to {save_path}")
-    plt.close()
 
-def plot_swing_analysis(global_history, local_history, save_path="results/swing_analysis.png"):
-    """
-    Graph 6: Swing Attacker Dynamics.
-    "Label local trust as Bayesian... Label global trust as smoothed VehicleRank"
-    """
-    plt.figure()
-    
-    # Global history should already be normalized by caller (or here if we had context)
-    # Assuming caller passes normalized trace
-    plt.plot(global_history, label='Global Trust (Smoothed VehicleRank)', color='purple')
-    plt.plot(local_history, label='Local Trust (Bayesian Window=10)', color='orange', linestyle='-', alpha=0.8)
-    
-    plt.title("Swing Attacker Dynamics")
-    plt.xlabel("Simulation Step")
-    plt.ylabel("Trust Score")
-    plt.legend()
-    plt.grid(True)
-    
-    # Add text box
-    textstr = "While swing attackers manipulate local trust,\ntheir global trust remains suppressed due to\ntemporal smoothing and network-wide propagation."
-    props = dict(boxstyle='round', facecolor='wheat', alpha=0.2)
-    plt.text(0.05, 0.05, textstr, transform=plt.gca().transAxes, fontsize=10,
-        verticalalignment='bottom', bbox=props)
-    
-    os.makedirs(os.path.dirname(save_path), exist_ok=True)
-    plt.savefig(save_path, dpi=300, bbox_inches="tight")
-    print(f"Plot saved to {save_path}")
-    plt.close()
+def plot_proposed_swing_analysis(out_dir):
+    """Swing attacker dynamics for PROPOSED: global vs local trust of a swing node."""
+    res = run_single_simulation('PROPOSED', steps=100, percent_malicious=0.0, percent_swing=0.2)
+    vehicles = res['vehicles']
+    swing_nodes = [v for v in vehicles.values() if v.behavior_type == 'SWING']
+    if not swing_nodes:
+        print("  [skip] proposed_swing_analysis.png -- no swing nodes found")
+        return
+    target = swing_nodes[0]
+    global_hist = target.trust_history
 
-def plot_trust_convergence(vehicles, save_path="results/trust_convergence.png"):
-    """
-    Plots the fraction of nodes with stable rank over time.
-    Shows how fast the system settles.
-    Metric: Fraction of nodes whose rank changed by <= 5% of total nodes since last step.
-    """
-    import numpy as np
-    
-    # 1. Build Score Matrix (Steps x Vehicles)
-    if not vehicles: return
-    
-    vids = sorted(list(vehicles.keys()))
-    sample_v = vehicles[vids[0]]
-    n_steps = len(sample_v.trust_history)
-    n_vehicles = len(vids)
-    
-    score_matrix = np.zeros((n_steps, n_vehicles))
-    for i, vid in enumerate(vids):
-        hist = vehicles[vid].trust_history
-        length = min(len(hist), n_steps)
-        score_matrix[:length, i] = hist[:length]
-        
-    # 2. Compute Ranks at each step
-    # Rank 0 = Highest Trust
-    rank_matrix = np.zeros((n_steps, n_vehicles), dtype=int)
-    
-    for t in range(n_steps):
-        scores = score_matrix[t, :]
-        # efficient rank: argsort of argsort of negated scores
-        temp = np.argsort(-scores)
-        ranks = np.empty_like(temp)
-        ranks[temp] = np.arange(n_vehicles)
-        rank_matrix[t, :] = ranks
-        
-    # 3. Compute Stability
-    # Threshold for "stable" = e.g. 5% of N
-    threshold = max(1, int(0.05 * n_vehicles))
-    
-    stability_fraction = []
-    # Skip t=0
-    plot_steps = range(1, n_steps)
-    
-    for t in plot_steps:
-        diffs = np.abs(rank_matrix[t] - rank_matrix[t-1])
-        stable_count = np.sum(diffs <= threshold)
-        frac = stable_count / n_vehicles
-        stability_fraction.append(frac)
-        
-    # 4. Plot
-    plt.figure()
-    
-    burn_in = 5
-    # Adjust plot steps if burn_in applies
-    valid_indices = [i for i, s in enumerate(plot_steps) if s > burn_in]
-    
-    if valid_indices:
-        plt.plot([plot_steps[i] for i in valid_indices], [stability_fraction[i] for i in valid_indices], color='navy')
+    # Compute windowed local trust from an honest observer
+    honest_nodes = [v for v in vehicles.values() if not v.is_malicious]
+    local_hist = []
+    if honest_nodes:
+        observer = honest_nodes[0]
+        logs = observer.interaction_logs.get(target.id, [])
+        for t in range(len(global_hist)):
+            window = logs[:t + 1][-10:]
+            if window:
+                pos = sum(1 for x in window if x)
+                local_hist.append((1 + pos) / (2 + len(window)))
+            else:
+                local_hist.append(0.5)
     else:
-        plt.plot(plot_steps, stability_fraction, color='navy')
-        
-    plt.title(f"Trust Convergence Time\n(Stable Rank = change <= {threshold} positions)")
-    plt.xlabel("Simulation Step")
-    plt.ylabel("Fraction of Nodes with Stable Rank")
-    plt.ylim(0, 1.05)
-    plt.grid(True)
-    
-    os.makedirs(os.path.dirname(save_path), exist_ok=True)
-    plt.savefig(save_path, dpi=300, bbox_inches="tight")
-    print(f"Plot saved to {save_path}")
-    plt.close()
+        local_hist = [0.5] * len(global_hist)
 
-def plot_dag_structure(dag, save_path="results/dag_structure.png"):
-    """
-    Visualizes the DAG structure.
-    Uses a layered layout based on parent-child relationships.
-    """
+    fig, ax = plt.subplots()
+    ax.plot(global_hist, label='Global Trust (Smoothed VehicleRank)', color='purple')
+    ax.plot(local_hist, label='Local Trust (Bayesian Window=10)', color='orange', alpha=0.8)
+    ax.set_title("Swing Attacker Dynamics")
+    ax.set_xlabel("Simulation Step")
+    ax.set_ylabel("Trust Score")
+    ax.legend()
+    ax.grid(True)
+    props = dict(boxstyle='round', facecolor='wheat', alpha=0.2)
+    ax.text(0.05, 0.05,
+            "While swing attackers manipulate local trust,\n"
+            "their global trust remains suppressed due to\n"
+            "temporal smoothing and network-wide propagation.",
+            transform=ax.transAxes, fontsize=10, verticalalignment='bottom', bbox=props)
+    _save(fig, os.path.join(out_dir, "proposed_swing_analysis.png"))
+
+
+def plot_proposed_trust_convergence(vehicles, out_dir):
+    """Fraction of nodes with stable rank over time (PROPOSED only)."""
+    if not vehicles:
+        return
+    vids = sorted(vehicles.keys())
+    n_steps = len(vehicles[vids[0]].trust_history)
+    n_v = len(vids)
+    score_mat = np.zeros((n_steps, n_v))
+    for i, vid in enumerate(vids):
+        h = vehicles[vid].trust_history
+        score_mat[:min(len(h), n_steps), i] = h[:min(len(h), n_steps)]
+    rank_mat = np.zeros((n_steps, n_v), dtype=int)
+    for t in range(n_steps):
+        order = np.argsort(-score_mat[t, :])
+        r = np.empty_like(order)
+        r[order] = np.arange(n_v)
+        rank_mat[t, :] = r
+    threshold = max(1, int(0.05 * n_v))
+    burn_in = 5
+    xs, ys = [], []
+    for t in range(1, n_steps):
+        if t <= burn_in:
+            continue
+        stable = np.sum(np.abs(rank_mat[t] - rank_mat[t - 1]) <= threshold)
+        xs.append(t)
+        ys.append(stable / n_v)
+
+    fig, ax = plt.subplots()
+    ax.plot(xs, ys, color='navy')
+    ax.set_title(f"Trust Convergence Time\n(Stable Rank = change <= {threshold} positions)")
+    ax.set_xlabel("Simulation Step")
+    ax.set_ylabel("Fraction of Nodes with Stable Rank")
+    ax.set_ylim(0, 1.05)
+    ax.grid(True)
+    _save(fig, os.path.join(out_dir, "proposed_trust_convergence.png"))
+
+
+def plot_proposed_trust_normalized(vehicles, out_dir):
+    """Z-score trust difference (honest/malicious/swing) for PROPOSED only."""
+    norm_data = normalize_histories(vehicles)
+    if not norm_data:
+        return
+    histories = {'HONEST': [], 'MALICIOUS': [], 'SWING': []}
+    for vid, v in vehicles.items():
+        if vid in norm_data:
+            histories[v.behavior_type].append(norm_data[vid])
+    all_h = np.array([norm_data[uid] for uid in vehicles.keys()])
+    step_data = all_h.T
+    mean_s = np.mean(step_data, axis=1)
+    std_s = np.std(step_data, axis=1) + 1e-9
+    burn_in = 5
+    steps = np.arange(len(mean_s))
+
+    fig, ax = plt.subplots()
+    for cat, lists in histories.items():
+        if not lists:
+            continue
+        g_avg = np.mean(np.array(lists).T, axis=1)
+        z = (g_avg - mean_s) / std_s
+        ax.plot(steps[burn_in:], z[burn_in:], label=f'{cat} (Z-Score)', markevery=10)
+    ax.axhline(0, color='black', linestyle='--', alpha=0.5)
+    ax.fill_between(steps[burn_in:], -1, 1, color='gray', alpha=0.2, label='\u00b11 Std Dev')
+    ax.set_title("Normalised Trust Difference (Z-Score)\n(First 5 steps omitted for cold-start)")
+    ax.set_xlabel("Simulation Step")
+    ax.set_ylabel("Z-Score (Std Devs from Global Mean)")
+    ax.legend()
+    ax.grid(True)
+    _save(fig, os.path.join(out_dir, "proposed_trust_normalized.png"))
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  COMPARATIVE PLOTS (all models)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def plot_comp_traffic_detection(out_dir):
+    """All models: IoV traffic (interactions) vs malicious detected."""
+    print("Generating comp_traffic_detection ...")
+    steps, ips = 80, 50
+    fig, ax = plt.subplots()
+    for model in MODELS:
+        res = run_single_simulation(model, steps=steps, interactions_per_step=ips, percent_malicious=0.1)
+        x = [i * ips for i in range(1, steps + 1)]
+        ax.plot(x, res['detected_history'], **get_style(model))
+    ax.set_title("IoV Traffic vs Malicious Vehicle Detection")
+    ax.set_xlabel("Total Number of Interactions")
+    ax.set_ylabel("Malicious Vehicles Detected")
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    _save(fig, os.path.join(out_dir, "comp_traffic_detection.png"))
+
+
+def plot_comp_robustness(out_dir):
+    """Per-ratio robustness: separate PNGs for 10%, 20%, 30% malicious."""
+    print("Generating comp_robustness (10 / 20 / 30%) ...")
+    ratios = [0.1, 0.2, 0.3]
+    steps, ips = 60, 50
+    for ratio in ratios:
+        tag = int(ratio * 100)
+        fig, ax = plt.subplots()
+        for model in MODELS:
+            res = run_single_simulation(model, steps=steps, percent_malicious=ratio, interactions_per_step=ips)
+            x = [k * ips for k in range(1, steps + 1)]
+            ax.plot(x, res['detected_history'], **get_style(model))
+        ax.set_title(f"Robustness — Attacker Ratio {tag}%")
+        ax.set_xlabel("Interactions")
+        ax.set_ylabel("Detected Malicious Vehicles")
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+        _save(fig, os.path.join(out_dir, f"comp_robustness_{tag}.png"))
+
+
+def plot_comp_capacity(out_dir):
+    """All models: normalised capacity index vs network size (line plot)."""
+    print("Generating comp_capacity ...")
+    sizes = [10, 20, 30, 40, 50, 60]
+    cap = {m: [] for m in MODELS}
+    steps = 50
+    for N in sizes:
+        for model in MODELS:
+            res = run_single_simulation(model, num_vehicles=N, steps=steps)
+            sc = res['consensus_success']
+            if model == 'LT_PBFT':
+                ov = (N ** 2) / 20.0
+            elif model == 'COBATS':
+                ov = (N * 2) / 10.0
+            elif model == 'PROPOSED':
+                ov = N / 10.0
+            else:
+                ov = (N * 1.5) / 10.0
+            cap[model].append((sc / steps * 1000) / (10 + ov))
+
+    fig, ax = plt.subplots()
+    for model in MODELS:
+        ax.plot(sizes, cap[model], **get_style(model))
+    ax.set_title("Normalised Capacity Index vs Network Size")
+    ax.set_xlabel("Network Size (Number of Vehicles)")
+    ax.set_ylabel("Capacity Index")
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    _save(fig, os.path.join(out_dir, "comp_capacity.png"))
+    return sizes, cap
+
+
+def plot_comp_throughput(sizes, cap, out_dir):
+    """All models: capacity bar chart vs network size."""
+    print("Generating comp_throughput ...")
+    fig, ax = plt.subplots(figsize=(8, 4))
+    x = np.arange(len(sizes))
+    width = 0.12
+    for i, model in enumerate(MODELS):
+        offset = (i - len(MODELS) / 2) * width + width / 2
+        ax.bar(x + offset, cap[model], width, label=model, color=COLORS.get(model, 'gray'))
+    ax.set_title("Average Capacity Index vs Network Size")
+    ax.set_xlabel("Network Size")
+    ax.set_ylabel("Capacity Index")
+    ax.set_xticks(x)
+    ax.set_xticklabels([str(s) for s in sizes])
+    ax.legend()
+    ax.grid(axis='y', alpha=0.3)
+    _save(fig, os.path.join(out_dir, "comp_throughput.png"))
+
+
+def plot_comp_latency(out_dir):
+    """Analytical consensus latency vs network size."""
+    print("Generating comp_latency ...")
+    sizes = [10, 20, 30, 40, 50, 60]
+    lat = {m: [] for m in MODELS}
+    base = 100
+    for N in sizes:
+        for model in MODELS:
+            if model == 'PBFT':
+                v = base + 1.8 * N ** 2
+            elif model == 'LT_PBFT':
+                v = base + 1.5 * N ** 2
+            elif model == 'RTM':
+                v = base + 15 * N
+            elif model == 'BSED':
+                v = base + 18 * N
+            elif model == 'COBATS':
+                v = base + 20 * N
+            elif model == 'BTVR':
+                v = base + 4 * N + 20
+            elif model == 'PROPOSED':
+                v = base + 1.5 * N + 10
+            else:
+                v = base + 10 * N
+            lat[model].append(v)
+
+    fig, ax = plt.subplots()
+    for model in MODELS:
+        ax.plot(sizes, lat[model], marker='o', **get_style(model))
+    ax.set_title("Consensus Latency vs Network Size")
+    ax.set_xlabel("Network Size (Nodes)")
+    ax.set_ylabel("Consensus Latency (ms)")
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    _save(fig, os.path.join(out_dir, "comp_latency.png"))
+
+
+def plot_comp_swing_attack(out_dir):
+    """All models: swing attack success rate vs intensity."""
+    print("Generating comp_swing_attack ...")
+    intensities = [0.2, 0.5, 0.8, 0.95]
+    labels = ['Low', 'Medium', 'High', 'Very High']
+    res_s = {m: [] for m in MODELS}
+    for intensity in intensities:
+        for model in MODELS:
+            r = run_single_simulation(model, percent_malicious=0.0, percent_swing=0.2,
+                                      attack_intensity=intensity, steps=80)
+            failures = 80 - r['consensus_success']
+            res_s[model].append(failures / 80 * 100)
+
+    fig, ax = plt.subplots()
+    for model in MODELS:
+        ax.plot(labels, res_s[model], **get_style(model))
+    ax.set_title("Swing Attack Success Rate vs Intensity")
+    ax.set_xlabel("Attack Intensity")
+    ax.set_ylabel("Attack Success Rate (%)")
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    _save(fig, os.path.join(out_dir, "comp_swing_attack.png"))
+    return intensities, labels
+
+
+def plot_comp_internal_attack(intensities, labels, out_dir):
+    """All models: internal attack success rate vs intensity (bar chart)."""
+    print("Generating comp_internal_attack ...")
+    res_s = {m: [] for m in MODELS}
+    for intensity in intensities:
+        for model in MODELS:
+            r = run_single_simulation(model, percent_malicious=0.2, percent_swing=0.0,
+                                      attack_intensity=intensity, steps=80)
+            failures = 80 - r['consensus_success']
+            res_s[model].append(failures / 80 * 100)
+
+    fig, ax = plt.subplots(figsize=(8, 4))
+    x = np.arange(len(labels))
+    w = 0.12
+    for i, model in enumerate(MODELS):
+        off = (i - len(MODELS) / 2) * w + w / 2
+        ax.bar(x + off, res_s[model], w, label=model, color=COLORS.get(model, 'gray'))
+    ax.set_title("Internal Attack: Success Rate vs Intensity")
+    ax.set_xlabel("Attack Intensity")
+    ax.set_ylabel("Attack Success Rate (%)")
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels)
+    ax.legend()
+    ax.grid(axis='y', alpha=0.3)
+    _save(fig, os.path.join(out_dir, "comp_internal_attack.png"))
+
+
+def plot_comp_convergence(out_dir):
+    """All models: rank convergence stability over time."""
+    print("Generating comp_convergence ...")
+    steps = 100
+    fig, ax = plt.subplots()
+    for model in MODELS:
+        sim = Simulator(model_type=model, num_vehicles=50, percent_malicious=0.1)
+        ranks_hist = []
+        for t in range(steps):
+            sim.model.simulate_interaction_step(25)
+            sim.model.update_global_trust(sync_rsus=True)
+            scored = sorted(sim.model.vehicles.values(), key=lambda v: v.global_trust_score, reverse=True)
+            ranks_hist.append({v.id: i for i, v in enumerate(scored)})
+        threshold = 5
+        y = [0.0]
+        for t in range(1, steps):
+            prev, curr = ranks_hist[t - 1], ranks_hist[t]
+            stable = sum(1 for vid in prev if abs(prev[vid] - curr[vid]) <= threshold)
+            y.append(stable / 50.0)
+        ax.plot(range(steps), y, **get_style(model))
+    ax.set_title("Trust/Rank Convergence Stability")
+    ax.set_xlabel("Simulation Steps")
+    ax.set_ylabel("Fraction of Nodes with Stable Rank")
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    _save(fig, os.path.join(out_dir, "comp_convergence.png"))
+
+
+def plot_comp_consensus(out_dir):
+    """All models: consensus success rate across network sizes."""
+    print("Generating comp_consensus ...")
+    sizes = [10, 20, 30, 40, 50, 60]
+    steps = 50
+    rates = {m: [] for m in MODELS}
+    for N in sizes:
+        for model in MODELS:
+            res = run_single_simulation(model, num_vehicles=N, steps=steps, percent_malicious=0.1)
+            rates[model].append(res['consensus_success'] / steps * 100)
+
+    fig, ax = plt.subplots()
+    for model in MODELS:
+        ax.plot(sizes, rates[model], marker='o', **get_style(model))
+    ax.set_title("Consensus Success Rate vs Network Size")
+    ax.set_xlabel("Network Size (Nodes)")
+    ax.set_ylabel("Consensus Success Rate (%)")
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    _save(fig, os.path.join(out_dir, "comp_consensus.png"))
+
+
+def plot_comp_detection_tpr(out_dir):
+    """All models: detection TPR at the 30th-percentile threshold."""
+    print("Generating comp_detection_tpr ...")
+    ratios = [0.1, 0.15, 0.2, 0.25, 0.3]
+    tpr_data = {m: [] for m in MODELS}
+    for ratio in ratios:
+        for model in MODELS:
+            res = run_single_simulation(model, steps=80, percent_malicious=ratio)
+            vehicles = res['vehicles']
+            norm = normalize_histories(vehicles)
+            mal_ids = [v.id for v in vehicles.values() if v.is_malicious]
+            if not mal_ids or not norm:
+                tpr_data[model].append(0)
+                continue
+            scores = [norm[vid][-1] for vid in vehicles]
+            thresh = np.percentile(scores, 30)
+            tp = sum(1 for vid in mal_ids if norm[vid][-1] < thresh)
+            tpr_data[model].append(tp / len(mal_ids) * 100)
+
+    fig, ax = plt.subplots()
+    x_labels = [f"{int(r * 100)}%" for r in ratios]
+    for model in MODELS:
+        ax.plot(x_labels, tpr_data[model], marker='o', **get_style(model))
+    ax.set_title("Detection TPR at 30th-Percentile Threshold")
+    ax.set_xlabel("Malicious Ratio")
+    ax.set_ylabel("True Positive Rate (%)")
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    _save(fig, os.path.join(out_dir, "comp_detection_tpr.png"))
+
+
+def plot_comp_trust_evolution(out_dir):
+    """All models: median honest trust over simulation steps."""
+    print("Generating comp_trust_evolution ...")
+    steps = 80
+    fig, ax = plt.subplots()
+    for model in MODELS:
+        res = run_single_simulation(model, steps=steps, percent_malicious=0.1)
+        vehicles = res['vehicles']
+        norm = normalize_histories(vehicles)
+        honest = [v.id for v in vehicles.values() if not v.is_malicious]
+        if honest and norm:
+            med = np.median([norm[uid] for uid in honest], axis=0)
+            ax.plot(range(steps + 1), med, **get_style(model))
+    ax.set_title("Comparative Trust Evolution (Honest Median)")
+    ax.set_xlabel("Simulation Step")
+    ax.set_ylabel("Normalised Trust Score")
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    _save(fig, os.path.join(out_dir, "comp_trust_evolution.png"))
+
+
+def plot_comp_trust_evolution_malicious(out_dir):
+    """All models: median malicious trust over simulation steps."""
+    print("Generating comp_trust_evolution_malicious ...")
+    steps = 80
+    fig, ax = plt.subplots()
+    for model in MODELS:
+        res = run_single_simulation(model, steps=steps, percent_malicious=0.1)
+        vehicles = res['vehicles']
+        norm = normalize_histories(vehicles)
+        mal = [v.id for v in vehicles.values() if v.is_malicious]
+        if mal and norm:
+            med = np.median([norm[uid] for uid in mal], axis=0)
+            ax.plot(range(steps + 1), med, **get_style(model))
+    ax.set_title("Comparative Trust Evolution (Malicious Median)")
+    ax.set_xlabel("Simulation Step")
+    ax.set_ylabel("Normalised Trust Score")
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    _save(fig, os.path.join(out_dir, "comp_trust_evolution_malicious.png"))
+
+
+def plot_comp_trust_normalized(out_dir):
+    """All models: Z-score separation between honest and malicious groups."""
+    print("Generating comp_trust_normalized ...")
+    steps = 80
+    fig, ax = plt.subplots()
+    for model in MODELS:
+        res = run_single_simulation(model, steps=steps, percent_malicious=0.1)
+        vehicles = res['vehicles']
+        norm = normalize_histories(vehicles)
+        if not norm:
+            continue
+        honest = [norm[v.id] for v in vehicles.values() if not v.is_malicious and v.id in norm]
+        mal = [norm[v.id] for v in vehicles.values() if v.is_malicious and v.id in norm]
+        if not honest or not mal:
+            continue
+        h_avg = np.mean(honest, axis=0)
+        m_avg = np.mean(mal, axis=0)
+        all_h = np.array(list(norm.values()))
+        std = np.std(all_h, axis=0) + 1e-9
+        separation = (h_avg - m_avg) / std
+        burn = 5
+        ax.plot(range(burn, steps + 1), separation[burn:], **get_style(model))
+    ax.set_title("Trust Separation (Honest − Malicious) Z-Score")
+    ax.set_xlabel("Simulation Step")
+    ax.set_ylabel("Z-Score Separation")
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    _save(fig, os.path.join(out_dir, "comp_trust_normalized.png"))
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  DAG STRUCTURE
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def plot_dag_structure(out_dir):
+    """Generate DAG visualisation by running a short PROPOSED simulation."""
+    print("Generating dag_structure ...")
+    sim = Simulator(num_vehicles=10, model_type='PROPOSED')
+    mgr = ConsensusManager('PROPOSED', sim.model.vehicles)
+    for t in range(20):
+        sim.model.simulate_interaction_step(5)
+        sim.model.update_global_trust(sync_rsus=True)
+        mgr.attempt_consensus(step=t)
+
+    dag = mgr.dag
     blocks = dag.blocks
     if not blocks:
-        print("DAG is empty, skipping plot.")
+        print("  [skip] dag_structure.png -- DAG is empty")
         return
 
-    # 1. Compute Depths (Layering)
-    depths = {} # block_id -> int
-    
-    # Initialize all depths to 0
-    for bid in blocks:
-        depths[bid] = 0
-        
-    # Relax edges: depth(child) >= depth(parent) + 1
-    # Repeat until convergence (Longest Path)
-    
-    changed = True
+    # Compute depths
+    depths = {bid: 0 for bid in blocks}
+    changed, iters = True, 0
     max_depth = 0
-    loop_count = 0
-    
-    while changed and loop_count < len(blocks) + 2:
+    while changed and iters < len(blocks) + 2:
         changed = False
-        loop_count += 1
-        for bid, block in blocks.items():
-            current_depth = depths[bid]
-            max_p_depth = -1
-            
-            # Find max parent depth
-            has_known_parents = False
-            for pid in block.parents:
-                if pid in depths:
-                    has_known_parents = True
-                    max_p_depth = max(max_p_depth, depths[pid])
-            
-            new_depth = 0
-            if has_known_parents:
-                new_depth = max_p_depth + 1
-            
-            if new_depth > current_depth:
-                depths[bid] = new_depth
+        iters += 1
+        for bid, blk in blocks.items():
+            mp = max((depths[p] for p in blk.parents if p in depths), default=-1)
+            nd = mp + 1 if mp >= 0 else 0
+            if nd > depths[bid]:
+                depths[bid] = nd
                 changed = True
-                max_depth = max(max_depth, new_depth)
-    
-    # 2. Assign Y-coordinates (Layout)
+                max_depth = max(max_depth, nd)
+
     layers = {}
     for bid, d in depths.items():
-        if d not in layers: layers[d] = []
-        layers[d].append(bid)
-        
+        layers.setdefault(d, []).append(bid)
     y_coords = {}
     for d, bids in layers.items():
         n = len(bids)
         for i, bid in enumerate(bids):
             y_coords[bid] = i - (n - 1) / 2.0
-            
-    # 3. Plot — wider figure for DAG readability
-    plt.figure(figsize=(8, 4))
-    ax = plt.gca()
-    
-    # Draw Edges first
-    for bid, block in blocks.items():
+
+    fig, ax = plt.subplots(figsize=(8, 4))
+    for bid, blk in blocks.items():
         x1, y1 = depths[bid], y_coords[bid]
-        for pid in block.parents:
+        for pid in blk.parents:
             if pid in depths:
-                x2, y2 = depths[pid], y_coords[pid]
-                ax.plot([x2, x1], [y2, y1], color='gray', alpha=0.5, zorder=1)
-                
-    # Draw Nodes
-    x_vals = [depths[bid] for bid in blocks]
-    y_vals = [y_coords[bid] for bid in blocks]
-    
-    # Color by Validator
-    validators = sorted(list(set(b.validator_id for b in blocks.values())))
+                ax.plot([depths[pid], x1], [y_coords[pid], y1], color='gray', alpha=0.5, zorder=1)
+    x_vals = [depths[b] for b in blocks]
+    y_vals = [y_coords[b] for b in blocks]
+    validators = sorted(set(b.validator_id for b in blocks.values()))
     val_map = {v: i for i, v in enumerate(validators)}
-    colors = [val_map[blocks[bid].validator_id] for bid in blocks]
-    
-    sc = ax.scatter(x_vals, y_vals, c=colors, cmap='tab10', s=300, zorder=2, edgecolors='black')
-    
-    # Labels
+    c = [val_map[blocks[b].validator_id] for b in blocks]
+    ax.scatter(x_vals, y_vals, c=c, cmap='tab10', s=300, zorder=2, edgecolors='black')
     for bid in blocks:
-        ax.text(depths[bid], y_coords[bid], bid[:4], fontsize=10, ha='center', va='center', color='white', fontweight='bold', zorder=3)
-        
-    plt.title(f"DAG Structure (Height: {max_depth+1}, Blocks: {len(blocks)})")
-    plt.xlabel("Layer (Temporal Depth)")
-    plt.yticks([]) # Hide Y axis
-    plt.grid(False)
-    
-    # Legend for validators
-    import matplotlib.patches as mpatches
+        ax.text(depths[bid], y_coords[bid], bid[:4], fontsize=10, ha='center', va='center',
+                color='white', fontweight='bold', zorder=3)
+    ax.set_title(f"DAG Structure (Height: {max_depth + 1}, Blocks: {len(blocks)})")
+    ax.set_xlabel("Layer (Temporal Depth)")
+    ax.set_yticks([])
+    ax.grid(False)
     cmap = plt.get_cmap('tab10')
     if len(validators) <= 10:
         patches = [mpatches.Patch(color=cmap(val_map[v]), label=f'Val {v}') for v in validators]
-        plt.legend(handles=patches, loc='upper left', bbox_to_anchor=(1, 1))
-        
-    os.makedirs(os.path.dirname(save_path), exist_ok=True)
-    plt.savefig(save_path, dpi=300, bbox_inches="tight")
-    print(f"Plot saved to {save_path}")
-    plt.close()
+        ax.legend(handles=patches, loc='upper left', bbox_to_anchor=(1, 1))
+    _save(fig, os.path.join(out_dir, "dag_structure.png"))
 
 
-def generate_graph_1(out_dir="results"):
-    """Graph 1: IoV Traffic (Interactions) vs Malicious Detected"""
-    print("Generating Graph 1...")
-    steps = 80
-    interactions_per_step = 50
+# ═══════════════════════════════════════════════════════════════════════════════
+#  MASTER RUNNER
+# ═══════════════════════════════════════════════════════════════════════════════
 
-    plt.figure()
+def run_all_graphs():
+    """
+    Single entry point that regenerates EVERY graph.
+    All outputs land in RESULTS_DIR with standardised comp_*/proposed_*/dag_* names.
+    Prints granular progress and verifies completeness at the end.
+    """
+    out = RESULTS_DIR
+    os.makedirs(out, exist_ok=True)
 
-    for model in MODELS:
-        res = run_single_simulation(
-            model,
-            steps=steps,
-            interactions_per_step=interactions_per_step,
-            percent_malicious=0.1,
-        )
+    # ── Complete manifest of expected output files ────────────────────────────
+    EXPECTED_OUTPUTS = [
+        # Comparative (all-model) plots
+        'comp_traffic_detection.png',
+        'comp_robustness_10.png',
+        'comp_robustness_20.png',
+        'comp_robustness_30.png',
+        'comp_capacity.png',
+        'comp_throughput.png',
+        'comp_latency.png',
+        'comp_swing_attack.png',
+        'comp_internal_attack.png',
+        'comp_convergence.png',
+        'comp_consensus.png',
+        'comp_detection_tpr.png',
+        'comp_trust_evolution.png',
+        'comp_trust_evolution_malicious.png',
+        'comp_trust_normalized.png',
+        # Proposed-solo plots
+        'proposed_trust_evolution.png',
+        'proposed_detection_metrics.png',
+        'proposed_rank_distribution.png',
+        'proposed_trust_convergence.png',
+        'proposed_trust_normalized.png',
+        'proposed_swing_analysis.png',
+        # Structural
+        'dag_structure.png',
+    ]
 
-        # X-axis: Interactions (Step * IntPerStep)
-        x_axis = [i * interactions_per_step for i in range(1, steps + 1)]
-        y_axis = res["detected_history"]
+    total_steps = 16  # Number of generation steps
+    total_files = len(EXPECTED_OUTPUTS)  # 22 individual graph files
+    step = 0
 
-        plt.plot(x_axis, y_axis, **get_style(model))
+    def _step(label, files=1):
+        nonlocal step
+        step += 1
+        suffix = f" ({files} files)" if files > 1 else ""
+        print(f"\n[Step {step}/{total_steps}] {label}{suffix}")
 
-    plt.title("IoV Traffic vs Malicious Vehicle Behavior")
-    plt.xlabel("Total Number of Interactions")
-    plt.ylabel("Total Number of Malicious Vehicles Detected")
-    plt.legend()
-    plt.grid(True, alpha=0.3)
-    plt.savefig(f"{out_dir}/graph1_traffic_vs_detection.png", dpi=300, bbox_inches="tight")
-    plt.close()
+    print(f"\n{'=' * 60}")
+    print(f"  FULL GRAPH SUITE -- {total_files} graphs across {total_steps} steps")
+    print(f"  Output: {os.path.abspath(out)}/")
+    print(f"{'=' * 60}")
 
-def generate_graph_2(out_dir="results"):
-    """Graph 2: Interactions vs Malicious Vehicles (10%, 20%, 30%)"""
-    print("Generating Graph 2...")
-    ratios = [0.1, 0.2, 0.3]
-    
-    fig, axes = plt.subplots(1, 3, figsize=(8, 4), sharey=True)  # Compact 3-panel layout
-    steps = 60
-    
-    for i, ratio in enumerate(ratios):
-        ax = axes[i]
-        for model in MODELS:
-            res = run_single_simulation(model, steps=steps, percent_malicious=ratio, interactions_per_step=50)
-            x_axis = [k * 50 for k in range(1, steps + 1)]
-            y_axis = res['detected_history']
-            
-            style = get_style(model)
-            ax.plot(x_axis, y_axis, **style)
-            
-        ax.set_title(f"Attacker Ratio: {int(ratio*100)}%")
-        ax.set_xlabel("Interactions")
-        if i == 0:
-            ax.set_ylabel("Detected Malicious Vehicles")
-        ax.grid(True, alpha=0.3)
+    # ── SECTION 1: Comparative Plots (15 files) ─────────────────────────────
+    print(f"\n{'-' * 50}")
+    print("  SECTION 1/3 -- Comparative Plots (all models)")
+    print(f"{'-' * 50}")
 
-    handles, labels = axes[0].get_legend_handles_labels()
-    fig.legend(handles, labels, loc='center right')
-    plt.tight_layout(rect=(0, 0, 0.9, 1))
-    plt.savefig(f"{out_dir}/graph2_robustness_scenarios.png", dpi=300, bbox_inches="tight")
-    plt.close()
+    _step("comp_traffic_detection")
+    plot_comp_traffic_detection(out)
 
-def generate_graph_3_and_4(out_dir="results"):
-    """Graph 3 & 4: Analytical Capacity and Average Capacity vs Network Size"""
-    print("Generating Graph 3 & 4 (Capacity)...")
-    sizes = [10, 20, 30, 40, 50, 60]
-    results_capacity = {m: [] for m in MODELS}
-    steps = 50
-    
-    for N in sizes:
-        for model in MODELS:
-            res = run_single_simulation(model, num_vehicles=N, steps=steps)
-            success_count = res['consensus_success']
-            
-            # Theoretical Complexity Penalty
-            if model == 'LT_PBFT':
-                overhead = (N ** 2) / 20.0 # O(N^2)
-            elif model == 'COBATS':
-                overhead = (N * 2) / 10.0
-            elif model == 'PROPOSED':
-                overhead = (N) / 10.0 # O(N)
-            else:
-                 overhead = (N * 1.5) / 10.0
-            
-            raw_throughput = success_count / steps 
-            capacity = (raw_throughput * 1000) / (10 + overhead)
-            results_capacity[model].append(capacity)
-            
-    # Graph 3: Line Plot
-    plt.figure()
-    for model in MODELS:
-        plt.plot(sizes, results_capacity[model], **get_style(model))
-    plt.title("Normalized Capacity Index vs Network Size")
-    plt.xlabel("Network Size (Number of Vehicles)")
-    plt.ylabel("Capacity Index")
-    plt.legend()
-    plt.grid(True, alpha=0.3)
-    plt.savefig(f"{out_dir}/graph3_capacity_line.png", dpi=300, bbox_inches="tight")
-    plt.close()
-    
-    # Graph 4: Bar Chart
-    plt.figure(figsize=(8, 4))  # Wider for grouped bars
-    x = np.arange(len(sizes))
-    width = 0.12 
-    for i, model in enumerate(MODELS):
-        offset = (i - len(MODELS)/2) * width + width/2
-        c = COLORS.get(model, 'gray')
-        plt.bar(x + offset, results_capacity[model], width, label=model, color=c)
-    plt.title("Average Capacity Index vs Network Size")
-    plt.xlabel("Network Size")
-    plt.ylabel("Capacity Index")
-    plt.xticks(x, [str(size) for size in sizes])
-    plt.legend()
-    plt.grid(axis='y', alpha=0.3)
-    plt.savefig(f"{out_dir}/graph4_throughput_bar.png", dpi=300, bbox_inches="tight")
-    plt.close()
+    _step("comp_robustness (10%, 20%, 30%)", files=3)
+    plot_comp_robustness(out)
 
-    # Graph 4B: Analytical Confirmation Delay vs Network Size (New Feature)
-    print("Generating Graph 4B (Analytical Delay)...")
-    results_latency = {m: [] for m in MODELS}
-    
-    for idx_n, N in enumerate(sizes):
-        base_latency = 100 # ms base network delay
-        
-        for model in MODELS:
-            # Latency Model from Paper/Observation
-            # PBFT: O(N^2) -> Steep quadratic rise
-            # Traditional: O(N) -> Linear
-            # DBFT/Proposed: O(1) or very low O(log N) due to Committee fixed size
-            
-            if model == 'LT_PBFT':
-                # Quadratic rise (Standard PBFT behavior)
-                # Formula: Base + C * N^2
-                lat = base_latency + (1.5 * (N ** 2))
+    _step("comp_capacity")
+    sizes, cap = plot_comp_capacity(out)
 
-            elif model == 'PBFT':
-                # Pure PBFT (Classical) - Heaviest message complexity
-                lat = base_latency + (1.8 * (N ** 2))
-                
-            elif model == 'RTM':
-                # Linear processing (O(N) aggregation)
-                lat = base_latency + (15 * N)
+    _step("comp_throughput")
+    plot_comp_throughput(sizes, cap, out)
 
-            elif model == 'BSED':
-                # Event verification adds overhead vs RTM
-                lat = base_latency + (18 * N) 
-                
-            elif model == 'COBATS':
-                # Slightly heavier linear
-                lat = base_latency + (20 * N)
-                
-            elif model == 'BTVR':
-                # Voting based, no complex graph, linear but fast
-                lat = base_latency + (4 * N) + 20
+    _step("comp_latency")
+    plot_comp_latency(out)
 
-            elif model == 'PROPOSED':
-                # Committee Based (almost constant time or very shallow linear)
-                # Committee size is fixed (e.g., 5 or 10), so N doesn't impact consensus time much
-                # Just trust aggregation time O(N), but consensus is O(1)
-                lat = base_latency + (1.5 * N) + 10 # Lowest slope
-            else:
-                lat = base_latency + (10 * N) # Fallback for unknown models
-            
-            results_latency[model].append(lat)
+    _step("comp_swing_attack")
+    intensities, labels = plot_comp_swing_attack(out)
 
-    plt.figure()
-    for model in MODELS:
-        plt.plot(sizes, results_latency[model], marker='o', **get_style(model))
-    
-    plt.title("Consensus Latency vs Network Size")
-    plt.xlabel("Network Size (Nodes)")
-    plt.ylabel("Consensus Latency (ms)")
-    plt.legend()
-    plt.grid(True, alpha=0.3)
-    plt.savefig(f"{out_dir}/graph4b_latency_line.png", dpi=300, bbox_inches="tight")
-    plt.close()
+    _step("comp_internal_attack")
+    plot_comp_internal_attack(intensities, labels, out)
 
-def generate_graph_5(out_dir="results"):
-    """Graph 5: Swing Attack Success vs Intensity"""
-    print("Generating Graph 5...")
-    intensities = [0.2, 0.5, 0.8, 0.95]
-    labels_x = ['Low', 'Medium', 'High', 'Very High']
-    res_success = {m: [] for m in MODELS}
-    
-    for intensity in intensities:
-        for model in MODELS:
-            sim_res = run_single_simulation(model, percent_malicious=0.0, percent_swing=0.2, 
-                                            attack_intensity=intensity, steps=80)
-            total_rounds = 80
-            failures = total_rounds - sim_res['consensus_success']
-            rate = (failures / total_rounds) * 100
-            res_success[model].append(rate)
+    _step("comp_convergence")
+    plot_comp_convergence(out)
 
-    plt.figure()
-    for model in MODELS:
-        plt.plot(labels_x, res_success[model], **get_style(model))
-    plt.title("Success Rate of Swing Attacks vs Attack Intensity")
-    plt.xlabel("Attack Intensity")
-    plt.ylabel("Attack Success Rate (%)")
-    plt.legend()
-    plt.grid(True, alpha=0.3)
-    plt.savefig(f"{out_dir}/graph5_swing_attack_success.png", dpi=300, bbox_inches="tight")
-    plt.close()
-    return intensities, labels_x
+    _step("comp_consensus")
+    plot_comp_consensus(out)
 
-def generate_graph_6(intensities, labels_x, out_dir="results"):
-    """Graph 6: Internal Attack Success vs Intensity"""
-    print("Generating Graph 6...")
-    res_success = {m: [] for m in MODELS}
-    
-    for intensity in intensities:
-        for model in MODELS:
-            sim_res = run_single_simulation(model, percent_malicious=0.2, percent_swing=0.0,
-                                            attack_intensity=intensity, steps=80)
-            total = 80
-            failures = total - sim_res['consensus_success']
-            rate = (failures / total) * 100
-            res_success[model].append(rate)
-            
-    plt.figure(figsize=(8, 4))  # Wider for grouped bars
-    x = np.arange(len(labels_x))
-    width = 0.12
-    for i, model in enumerate(MODELS):
-        offset = (i - len(MODELS)/2) * width + width/2
-        c = COLORS.get(model, 'gray')
-        plt.bar(x + offset, res_success[model], width, label=model, color=c)
-    plt.title("Internal Attack Challenge: Success Rate vs Intensity")
-    plt.xlabel("Attack Intensity")
-    plt.ylabel("Attack Success Rate (%)")
-    plt.xticks(x, labels_x)
-    plt.legend()
-    plt.grid(axis='y', alpha=0.3)
-    plt.savefig(f"{out_dir}/graph6_internal_attack_bar.png", dpi=300, bbox_inches="tight")
-    plt.close()
+    _step("comp_detection_tpr")
+    plot_comp_detection_tpr(out)
 
-def generate_graph_7(out_dir="results"):
-    """Graph 7: Trust Convergence Stability"""
-    print("Generating Graph 7...")
-    steps = 100
-    plt.figure()
-    
-    for model in MODELS:
-        sim = Simulator(model_type=model, num_vehicles=50, percent_malicious=0.1)
-        history_ranks = [] 
-        
-        for t in range(steps):
-             sim.model.simulate_interaction_step(25)
-             sim.model.update_global_trust(sync_rsus=True)
-             
-             vehicles = sim.model.vehicles
-             scores = [(v.id, v.global_trust_score) for v in vehicles.values()]
-             scores.sort(key=lambda x: x[1], reverse=True)
-             
-             rank_map = {vid: i for i, (vid, score) in enumerate(scores)}
-             history_ranks.append(rank_map)
-             
-        threshold = 5 
-        y_axis = [0.0] 
-        
-        for t in range(1, steps):
-            prev = history_ranks[t-1]
-            curr = history_ranks[t]
-            stable_count = 0
-            for vid in prev:
-                change = abs(prev[vid] - curr[vid])
-                if change <= threshold:
-                    stable_count += 1
-            y_axis.append(stable_count / 50.0)
-            
-        plt.plot(range(steps), y_axis, **get_style(model))
+    _step("comp_trust_evolution")
+    plot_comp_trust_evolution(out)
 
-    plt.title("Trust/Rank Convergence Stability")
-    plt.xlabel("Simulation Steps")
-    plt.ylabel("Fraction of Nodes with Stable Rank")
-    plt.legend()
-    plt.grid(True, alpha=0.3)
-    plt.savefig(f"{out_dir}/graph7_convergence_stability.png", dpi=300, bbox_inches="tight")
-    plt.close()
+    _step("comp_trust_evolution_malicious")
+    plot_comp_trust_evolution_malicious(out)
 
-def run_paper_suite():
-    """Run all paper graph generations."""
-    out_dir = "results"
-    os.makedirs(out_dir, exist_ok=True)
-    
-    print(">>> Starting Paper Graph Suite Generation...")
-    
-    # Graph 1: Traffic Density
-    generate_graph_1(out_dir)
-    
-    # Graph 2: Robustness Scenarios
-    generate_graph_2(out_dir)
-    
-    # Graph 3, 4, 4B: Throughput, Capacity, Latency
-    generate_graph_3_and_4(out_dir)
-    
-    # Graph 5: Swing Attack Success (Returns data needed for Graph 6)
-    intensities, labels_x = generate_graph_5(out_dir)
-    
-    # Graph 6: Internal Attack Success
-    generate_graph_6(intensities, labels_x, out_dir)
-    
-    # Graph 7: Stability Convergence
-    generate_graph_7(out_dir)
-    
-    # =========================================================
-    # SUPPLEMENTARY PLOTS (Internal Analytics & Debugging)
-    # =========================================================
-    print(">>> Generating Supplementary Plots (Trust Evolution, DAG, etc.)...")
-    
-    # 1. Detailed Trust Evolution (Single Run of PROPOSED)
-    res = run_single_simulation('PROPOSED', steps=80)
-    plot_trust_evolution(res['vehicles'], save_path=f"{out_dir}/trust_evolution.png")
-    
-    # 2. Detailed Detection Metrics (Single Run of PROPOSED)
-    plot_detection_metrics(res['vehicles'], save_path=f"{out_dir}/detection_metrics.png")
-    
-    # 3. Final Trust Distribution (Single Run of PROPOSED)
-    plot_final_trust_distribution(res['vehicles'], save_path=f"{out_dir}/final_rank_distribution.png")
-    
-    # 4. Comparative Trust Evolution (Norm)
-    plot_comparative_trust(res['vehicles'], save_path=f"{out_dir}/comparative_trust_normalized.png")
-    
-    # 5. DAG Structure Visualization
-    # Requires a simulation that produced a DAG
-    # (The comparative runs usually don't return the DAG object, so we run a quick one here)
-    # Note: This is computationally expensive to draw if DAG is huge.
-    sim = Simulator(num_vehicles=10, model_type='PROPOSED') 
-    # Run short sim to get a displayable DAG
-    for _ in range(20): 
-        sim.model.simulate_interaction_step(5)
-        sim.model.update_global_trust()
-        
-        # Manually trigger consensus to create blocks
-        # We need to access the ConsensusManager if it exists or mocked
-        # The Simulator in this repo doesn't expose ConsensusManager top-level easily
-        # But we can try to look at the DAG if available
-        pass
-        
-    # Since the basic Simulator doesn't expose DAG plotting easily without the ConsensusManager linkage,
-    # we will skip plot_dag_structure unless we hook it up.
-    # Alternatively, we can use the 'res' from earlier if we returned the consensus manager.
-    # For now, let's omit DAG structure to avoid breaking if the object isn't returned.
-    
-    # 6. Swing Analysis (Specific Scenario)
-    # We need a run with Swing Attackers
-    res_swing = run_single_simulation(
-        'PROPOSED', steps=100, percent_malicious=0.0, percent_swing=0.2
-    )
-    # Extract histories
-    # (The data structures for plot_swing_analysis need matching)
-    # plot_swing_analysis expects global_history, local_history
-    # Our run_single_simulation returns 'vehicles'
-    
-    # Re-map: 
-    # We pick one swing attacker and one victim (or average)
-    swing_nodes = [v for v in res_swing['vehicles'].values() if v.is_malicious] # Swing set isMalicious=True in sim ?
-    # Wait, benchmark sets Swing behavior but is_malicious might be False?
-    # Let's check TrustModel logic... Sim sets behavior=SWING.
-    # In Vehicle init: self.is_malicious = (behavior_type != self.BEHAVIOR_HONEST) -> So Yes.
-    
-    # We will skip swing_analysis for now as it requires specific data extraction logic 
-    # that isn't standardized in run_single_simulation's return dict yet.
-    
-    
-    print(">>> All Graphs Generated in /results/")
+    _step("comp_trust_normalized")
+    plot_comp_trust_normalized(out)
 
+    # ── SECTION 2: Proposed-Solo Plots (6 files) ────────────────────────────
+    print(f"\n{'-' * 50}")
+    print("  SECTION 2/3 -- Proposed Solo Plots")
+    print(f"{'-' * 50}")
+
+    _step("proposed solo suite (evolution + detection + rank + convergence + normalized)", files=5)
+    print("  Running PROPOSED simulation for solo plots ...")
+    res = run_single_simulation('PROPOSED', steps=100, percent_malicious=0.1)
+    plot_proposed_trust_evolution(res['vehicles'], out)
+    plot_proposed_detection_metrics(res['vehicles'], out)
+    plot_proposed_rank_distribution(res['vehicles'], out)
+    plot_proposed_trust_convergence(res['vehicles'], out)
+    plot_proposed_trust_normalized(res['vehicles'], out)
+
+    _step("proposed_swing_analysis")
+    plot_proposed_swing_analysis(out)
+
+    # ── SECTION 3: Structural Visualisation (1 file) ────────────────────────
+    print(f"\n{'-' * 50}")
+    print("  SECTION 3/3 -- Structural Visualisations")
+    print(f"{'-' * 50}")
+
+    _step("dag_structure")
+    plot_dag_structure(out)
+
+    # ── VERIFICATION & SUMMARY ───────────────────────────────────────────────
+    generated = sorted(f for f in os.listdir(out) if f.endswith('.png'))
+    missing = [f for f in EXPECTED_OUTPUTS if f not in generated]
+    extra = [f for f in generated if f not in EXPECTED_OUTPUTS]
+
+    print(f"\n{'=' * 60}")
+    print(f"  GENERATION COMPLETE")
+    print(f"{'=' * 60}")
+
+    for cat_name, prefix in [('Comparative', 'comp_'),
+                              ('Proposed Solo', 'proposed_'),
+                              ('Structural', 'dag_')]:
+        cat_files = [f for f in generated if f.startswith(prefix)]
+        if cat_files:
+            label = "file" if len(cat_files) == 1 else "files"
+            print(f"\n  {cat_name} ({len(cat_files)} {label}):")
+            for f in cat_files:
+                print(f"    [OK] {f}")
+
+    if extra:
+        print(f"\n  Extra files in output ({len(extra)}):")
+        for f in extra:
+            print(f"    + {f}")
+
+    if missing:
+        print(f"\n  WARNING -- {len(missing)} expected graphs MISSING:")
+        for f in missing:
+            print(f"    [MISS] {f}")
+    else:
+        print(f"\n  All {total_files} expected graphs verified present.")
+
+    print(f"\n  Directory: {os.path.abspath(out)}/")
+    print(f"{'=' * 60}\n")
+
+
+# Keep backward-compatible alias used by run_experiment.py --compare
+run_paper_suite = run_all_graphs
