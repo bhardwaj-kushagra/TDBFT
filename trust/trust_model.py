@@ -55,6 +55,11 @@ class TrustModel:
         Malicious vehicles behave badly (send false messages / drop packets).
         """
         self.step_count += 1
+        
+        # Propagate step count to all vehicles (used for phase-aware voting in consensus)
+        for v in self.vehicles.values():
+            v.trust_model_step_count = self.step_count
+        
         all_ids = list(self.vehicles.keys())
         
         for _ in range(num_interactions):

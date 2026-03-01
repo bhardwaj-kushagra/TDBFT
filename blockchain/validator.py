@@ -30,17 +30,14 @@ def select_validators(ranked_vehicles: List, top_n: int = 3) -> List:
     
     return committee
 
-def check_consensus_weighted(committee: List, proposal_score=1.0) -> bool:
+def check_consensus_weighted(committee: List) -> bool:
     """
     Abstracted Consensus (Section IV-B).
     Calculates weighted votes.
     
     Block accepted if Sum(ti * si) >= (2/3) * Sum(ti).
-    Here assuming si (vote) is 1.0 (Correct) if vehicle is HONEST, 
-    and 0.0 (Reject/Bad) if MALICIOUS/SWING?
-    
-    Actually, Malicious nodes might vote NO or PROPOSE BAD BLOCKS.
-    Assuming this function checks if a block proposed by Leader is accepted.
+    Honest nodes vote YES, malicious nodes vote NO.
+    Swing nodes vote based on their current phase.
     """
     total_trust_mass = sum(v.global_trust_score for v in committee)
     if total_trust_mass == 0:
@@ -49,17 +46,14 @@ def check_consensus_weighted(committee: List, proposal_score=1.0) -> bool:
     approval_mass = 0.0
     
     for member in committee:
-        # Honest members vote YES (approving a theoretically good proposal)
-        # Malicious members vote NO (trying to stall or they propose bad blocks)
-        # Simplified: Honest = Vote 1, Malicious = Vote 0
-        # NOTE: This uses 'is_malicious' flag to simulate the ATTACK SCENARIO where 
-        # malicious nodes actively attempt to disrupt consensus. In a real deployment,
-        # this would check the validity of the proposed block data.
-        
-        # Real PBFT: 2/3 majority.
-        # Weighted PBFT: 2/3 of Trust Mass.
-        
-        vote = 1.0 if not member.is_malicious else 0.0
+        # Phase-aware voting:
+        # Honest members always vote YES.
+        # Malicious members always vote NO.
+        # Swing members vote YES in good phase, NO in bad phase.
+        if hasattr(member, 'is_in_good_phase'):
+            vote = 1.0 if member.is_in_good_phase() else 0.0
+        else:
+            vote = 1.0 if not member.is_malicious else 0.0
         approval_mass += vote * member.global_trust_score
         
     threshold = (2.0 / 3.0) * total_trust_mass
@@ -76,8 +70,11 @@ def check_consensus_simple(committee: List) -> bool:
     
     votes = 0
     for member in committee:
-        # Honest = Vote 1, Malicious = Vote 0
-        votes += 1 if not member.is_malicious else 0
+        # Phase-aware voting: swing nodes cooperate during good phase
+        if hasattr(member, 'is_in_good_phase'):
+            votes += 1 if member.is_in_good_phase() else 0
+        else:
+            votes += 1 if not member.is_malicious else 0
         
     threshold = (2.0 / 3.0) * n
     return votes >= threshold

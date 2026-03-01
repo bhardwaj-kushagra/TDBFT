@@ -36,12 +36,19 @@ def _run_pagerank(M: np.ndarray, n: int, damping: float, max_iter: int, tol: flo
     t_vec = np.ones(n) / n
     teleport_val = (1.0 - damping) / n
     
-    for _ in range(max_iter):
+    converged = False
+    for iteration in range(max_iter):
         t_new = damping * np.dot(t_vec, S) + teleport_val
         if np.linalg.norm(t_new - t_vec, 1) < tol:
             t_vec = t_new
+            converged = True
             break
         t_vec = t_new
+    
+    if not converged:
+        import warnings
+        warnings.warn(f"PageRank did not converge after {max_iter} iterations (tol={tol}).")
+    
     return t_vec
 
 # ==============================================================================
@@ -144,6 +151,11 @@ class LtPbftStrategy(TrustStrategy):
     Lightweight Trust-Based PBFT.
     Uses ONLY local trust (Bayesian) + Simple Averaging.
     Explicitly weaker than PBFT (adds overhead) and Proposed (no Graph trust).
+    
+    NOTE: Global aggregation is intentionally identical to BTVR (simple averaging).
+    The differentiation is in consensus: LT_PBFT uses check_consensus_simple
+    (1-node-1-vote) vs BTVR's check_consensus_weighted (trust-weighted votes).
+    See ConsensusManager for the branching logic.
     """
     def record_interaction(self, vehicle, target_id: str, is_positive: bool):
         alpha, beta = vehicle.interactions.get(target_id, (1.0, 1.0))
@@ -183,6 +195,10 @@ class BtvrStrategy(TrustStrategy):
     """
     BTVR: Standard Bayesian Local + Simple Averaging Global.
     A baseline for "Basic Trust".
+    
+    NOTE: Global aggregation is intentionally identical to LT_PBFT.
+    The differentiation is in consensus: BTVR uses check_consensus_weighted
+    (trust-weighted votes) vs LT_PBFT's check_consensus_simple (1-node-1-vote).
     """
     def record_interaction(self, vehicle, target_id: str, is_positive: bool):
         alpha, beta = vehicle.interactions.get(target_id, (1.0, 1.0))
@@ -246,7 +262,10 @@ class CobatsStrategy(TrustStrategy):
             for target_id, (alpha, beta) in targets.items():
                 if target_id in weighted_sums:
                     trust_val = compute_trust(alpha, beta)
-                    weight = alpha + beta # Confidence metric
+                    # Cap confidence weight to prevent bad-mouthing amplification.
+                    # Without cap, a malicious node with many interactions gets
+                    # disproportionate influence via (alpha + beta) weighting.
+                    weight = min(alpha + beta, 30.0)  # Confidence metric, capped
                     
                     weighted_sums[target_id] += trust_val * weight
                     total_weights[target_id] += weight
@@ -284,7 +303,7 @@ class BsedStrategy(TrustStrategy):
         return vehicle.interactions
 
     def compute_global_trust(self, rsu, all_ids: List[str], reports: Dict) -> Dict[str, float]:
-        # 1. Initial Simple Average
+        # 1. Initial Median (more robust to poisoning than mean)
         scores = {vid: [] for vid in all_ids}
         for reporter_id, targets in reports.items():
             for target_id, (c, t) in targets.items():
@@ -292,9 +311,12 @@ class BsedStrategy(TrustStrategy):
                     val = c/t if t > 0 else 0.5
                     scores[target_id].append(val)
         
-        initial_means = {}
+        initial_consensus = {}
         for vid, val_list in scores.items():
-            initial_means[vid] = sum(val_list) / len(val_list) if val_list else 0.5
+            if val_list:
+                initial_consensus[vid] = float(np.median(val_list))
+            else:
+                initial_consensus[vid] = 0.5
 
         # 2. Credibility Weighting (Outlier Penalty)
         # If a reporter deviates significantly from the initial mean, reduce their weight.
@@ -304,7 +326,7 @@ class BsedStrategy(TrustStrategy):
             deviations = []
             for target_id, (c, t) in targets.items():
                 val = c/t if t > 0 else 0.5
-                consensus = initial_means.get(target_id, 0.5)
+                consensus = initial_consensus.get(target_id, 0.5)
                 deviations.append(abs(val - consensus))
             
             if deviations:
@@ -400,6 +422,5 @@ def get_strategy(model_type: str) -> TrustStrategy:
     elif model_type == 'RTM':
         return RtmStrategy()
     else:
-        # Default fallback
-        print(f"Warning: Unknown model_type '{model_type}', defaulting to ProposedStrategy.")
-        return ProposedStrategy()
+        raise ValueError(f"Unknown model_type '{model_type}'. "
+                         f"Valid types: PROPOSED, PBFT, BFT, LT_PBFT, BTVR, COBATS, BSED, RTM")

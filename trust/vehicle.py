@@ -26,7 +26,7 @@ class Vehicle:
             vehicle_id (str): Unique identifier.
             behavior_type (str): 'HONEST', 'MALICIOUS', or 'SWING'.
             model_type (str): Trust model to use.
-            attack_intensity (str): Probability of bad behavior when acting explicitly malicious.
+            attack_intensity (float): Probability of bad behavior when acting explicitly malicious.
                                     0.2 = Low, 0.5 = Medium, 0.9 = High.
         """
         self.id = vehicle_id
@@ -60,6 +60,9 @@ class Vehicle:
         # Give each swing attacker a random phase offset so they don't flip simultaneously
         self.swing_offset = random.randint(0, self.SWING_CYCLE_LENGTH) if self.behavior_type == self.BEHAVIOR_SWING else 0
 
+        # Step counter updated by TrustModel each step (used by validator for phase-aware voting)
+        self.trust_model_step_count = 0
+
 
     def perform_action(self, step_count: int) -> bool:
         """
@@ -88,7 +91,17 @@ class Vehicle:
                 # In bad phase, behave maliciously with intensity
                 return random.random() > self.attack_intensity
         
-        return True
+        raise ValueError(f"Unknown behavior_type: {self.behavior_type}")
+
+    def is_in_good_phase(self) -> bool:
+        """Check if this vehicle is currently in a cooperative phase.
+        Honest → always True, Malicious → always False, Swing → depends on step."""
+        if self.behavior_type == self.BEHAVIOR_HONEST:
+            return True
+        if self.behavior_type == self.BEHAVIOR_MALICIOUS:
+            return False
+        # SWING
+        return ((self.trust_model_step_count + self.swing_offset) // self.SWING_CYCLE_LENGTH) % 2 == 0
 
     def get_local_trust(self, target_id: str) -> float:
         """Calculate local trust for a specific target vehicle based on Model Type."""
@@ -139,7 +152,12 @@ class Vehicle:
         # Audit Fix #10: Malicious behavior model upgrade.
         # Malicious nodes perform "Bad Mouthing" (Slander) by reporting low trust for everyone.
         # This penalizes baseline models (Simple Averaging) while Proposed (PageRank) resists it.
-        if self.behavior_type == self.BEHAVIOR_MALICIOUS:
+        # Swing nodes also bad-mouth during their bad phase.
+        should_falsify = (
+            self.behavior_type == self.BEHAVIOR_MALICIOUS or
+            (self.behavior_type == self.BEHAVIOR_SWING and not self.is_in_good_phase())
+        )
+        if should_falsify:
             falsified_reports = {}
             for target_id, val in raw_reports.items():
                 if isinstance(val, float):

@@ -10,7 +10,6 @@ A block contains:
 - Issuer Trust (at time of creation)
 - TCW (Trust Weighted Cumulative Weight)
 """
-import time
 import uuid
 
 class Block:

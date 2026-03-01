@@ -519,22 +519,27 @@ def plot_comp_internal_attack(intensities, labels, out_dir):
 def plot_comp_convergence(out_dir):
     """All models: rank convergence stability over time."""
     print("Generating comp_convergence ...")
+    import random as _rng
+    _rng.seed(42)
+    np.random.seed(42)
     steps = 100
+    n_vehicles = 50
+    threshold = max(1, int(0.05 * n_vehicles))  # Match proposed_trust_convergence threshold
     fig, ax = plt.subplots()
     for model in MODELS:
-        sim = Simulator(model_type=model, num_vehicles=50, percent_malicious=0.1)
+        sim = Simulator(model_type=model, num_vehicles=n_vehicles, percent_malicious=0.1, percent_swing=0.05)
         ranks_hist = []
         for t in range(steps):
             sim.model.simulate_interaction_step(25)
             sim.model.update_global_trust(sync_rsus=True)
             scored = sorted(sim.model.vehicles.values(), key=lambda v: v.global_trust_score, reverse=True)
             ranks_hist.append({v.id: i for i, v in enumerate(scored)})
-        threshold = 5
+        threshold_c = threshold  # Use consistent threshold defined above
         y = [0.0]
         for t in range(1, steps):
             prev, curr = ranks_hist[t - 1], ranks_hist[t]
-            stable = sum(1 for vid in prev if abs(prev[vid] - curr[vid]) <= threshold)
-            y.append(stable / 50.0)
+            stable = sum(1 for vid in prev if abs(prev[vid] - curr[vid]) <= threshold_c)
+            y.append(stable / float(n_vehicles))
         ax.plot(range(steps), y, **get_style(model))
     ax.set_title("Trust/Rank Convergence Stability")
     ax.set_xlabel("Simulation Steps")
@@ -676,6 +681,9 @@ def plot_comp_trust_normalized(out_dir):
 def plot_dag_structure(out_dir):
     """Generate DAG visualisation by running a short PROPOSED simulation."""
     print("Generating dag_structure ...")
+    import random as _rng
+    _rng.seed(42)
+    np.random.seed(42)
     sim = Simulator(num_vehicles=10, model_type='PROPOSED')
     mgr = ConsensusManager('PROPOSED', sim.model.vehicles)
     for t in range(20):
@@ -802,43 +810,90 @@ def run_all_graphs():
     print(f"{'-' * 50}")
 
     _step("comp_traffic_detection")
-    plot_comp_traffic_detection(out)
+    try:
+        plot_comp_traffic_detection(out)
+    except Exception as e:
+        print(f"  [FAIL] comp_traffic_detection: {e}")
 
     _step("comp_robustness (10%, 20%, 30%)", files=3)
-    plot_comp_robustness(out)
+    try:
+        plot_comp_robustness(out)
+    except Exception as e:
+        print(f"  [FAIL] comp_robustness: {e}")
 
     _step("comp_capacity")
-    sizes, cap = plot_comp_capacity(out)
+    sizes, cap = None, None
+    try:
+        sizes, cap = plot_comp_capacity(out)
+    except Exception as e:
+        print(f"  [FAIL] comp_capacity: {e}")
 
     _step("comp_throughput")
-    plot_comp_throughput(sizes, cap, out)
+    if sizes is not None and cap is not None:
+        try:
+            plot_comp_throughput(sizes, cap, out)
+        except Exception as e:
+            print(f"  [FAIL] comp_throughput: {e}")
+    else:
+        print("  [SKIP] comp_throughput (depends on comp_capacity)")
 
     _step("comp_latency")
-    plot_comp_latency(out)
+    try:
+        plot_comp_latency(out)
+    except Exception as e:
+        print(f"  [FAIL] comp_latency: {e}")
 
     _step("comp_swing_attack")
-    intensities, labels = plot_comp_swing_attack(out)
+    intensities, labels = None, None
+    try:
+        intensities, labels = plot_comp_swing_attack(out)
+    except Exception as e:
+        print(f"  [FAIL] comp_swing_attack: {e}")
 
     _step("comp_internal_attack")
-    plot_comp_internal_attack(intensities, labels, out)
+    if intensities is not None and labels is not None:
+        try:
+            plot_comp_internal_attack(intensities, labels, out)
+        except Exception as e:
+            print(f"  [FAIL] comp_internal_attack: {e}")
+    else:
+        print("  [SKIP] comp_internal_attack (depends on comp_swing_attack)")
 
     _step("comp_convergence")
-    plot_comp_convergence(out)
+    try:
+        plot_comp_convergence(out)
+    except Exception as e:
+        print(f"  [FAIL] comp_convergence: {e}")
 
     _step("comp_consensus")
-    plot_comp_consensus(out)
+    try:
+        plot_comp_consensus(out)
+    except Exception as e:
+        print(f"  [FAIL] comp_consensus: {e}")
 
     _step("comp_detection_tpr")
-    plot_comp_detection_tpr(out)
+    try:
+        plot_comp_detection_tpr(out)
+    except Exception as e:
+        print(f"  [FAIL] comp_detection_tpr: {e}")
 
     _step("comp_trust_evolution")
-    plot_comp_trust_evolution(out)
+    try:
+        plot_comp_trust_evolution(out)
+    except Exception as e:
+        print(f"  [FAIL] comp_trust_evolution: {e}")
 
     _step("comp_trust_evolution_malicious")
-    plot_comp_trust_evolution_malicious(out)
+    try:
+        plot_comp_trust_evolution_malicious(out)
+    except Exception as e:
+        print(f"  [FAIL] comp_trust_evolution_malicious: {e}")
 
     _step("comp_trust_normalized")
-    plot_comp_trust_normalized(out)
+    try:
+        plot_comp_trust_normalized(out)
+    except Exception as e:
+        print(f"  [FAIL] comp_trust_normalized: {e}")
 
     # ── SECTION 2: Proposed-Solo Plots (6 files) ────────────────────────────
     print(f"\n{'-' * 50}")
@@ -846,16 +901,22 @@ def run_all_graphs():
     print(f"{'-' * 50}")
 
     _step("proposed solo suite (evolution + detection + rank + convergence + normalized)", files=5)
-    print("  Running PROPOSED simulation for solo plots ...")
-    res = run_single_simulation('PROPOSED', steps=100, percent_malicious=0.1)
-    plot_proposed_trust_evolution(res['vehicles'], out)
-    plot_proposed_detection_metrics(res['vehicles'], out)
-    plot_proposed_rank_distribution(res['vehicles'], out)
-    plot_proposed_trust_convergence(res['vehicles'], out)
-    plot_proposed_trust_normalized(res['vehicles'], out)
+    try:
+        print("  Running PROPOSED simulation for solo plots ...")
+        res = run_single_simulation('PROPOSED', steps=100, percent_malicious=0.1)
+        plot_proposed_trust_evolution(res['vehicles'], out)
+        plot_proposed_detection_metrics(res['vehicles'], out)
+        plot_proposed_rank_distribution(res['vehicles'], out)
+        plot_proposed_trust_convergence(res['vehicles'], out)
+        plot_proposed_trust_normalized(res['vehicles'], out)
+    except Exception as e:
+        print(f"  [FAIL] proposed solo suite: {e}")
 
     _step("proposed_swing_analysis")
-    plot_proposed_swing_analysis(out)
+    try:
+        plot_proposed_swing_analysis(out)
+    except Exception as e:
+        print(f"  [FAIL] proposed_swing_analysis: {e}")
 
     # ── SECTION 3: Structural Visualisation (1 file) ────────────────────────
     print(f"\n{'-' * 50}")
@@ -863,7 +924,10 @@ def run_all_graphs():
     print(f"{'-' * 50}")
 
     _step("dag_structure")
-    plot_dag_structure(out)
+    try:
+        plot_dag_structure(out)
+    except Exception as e:
+        print(f"  [FAIL] dag_structure: {e}")
 
     # ── VERIFICATION & SUMMARY ───────────────────────────────────────────────
     generated = sorted(f for f in os.listdir(out) if f.endswith('.png'))

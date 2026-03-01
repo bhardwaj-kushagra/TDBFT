@@ -15,7 +15,6 @@ import os
 import sys
 import math
 import random
-import time
 
 # Ensure SUMO_HOME is set
 if 'SUMO_HOME' in os.environ:
@@ -51,11 +50,11 @@ from experiments.config import (
     MODELS, RESULTS_DIR
 )
 from experiments.plots import (
-    plot_trust_evolution, 
-    plot_detection_metrics, 
-    plot_swing_analysis,
-    plot_comparative_trust, 
-    plot_final_trust_distribution
+    plot_proposed_trust_evolution,
+    plot_proposed_detection_metrics,
+    plot_proposed_swing_analysis,
+    plot_proposed_rank_distribution,
+    plot_proposed_trust_normalized
 )
 import matplotlib.pyplot as plt
 
@@ -102,7 +101,7 @@ def run_sumo_logic(model_name, label=""):
         print(f"Tracking Swing Attacker: {target_swing.id}")
 
     # 2. Start SUMO
-    sumoBinary = "sumo-gui"
+    sumoBinary = "sumo"  # Headless for batch runs; use sumo-gui for interactive debugging
     sumoCmd = [sumoBinary, "-c", SUMO_CONFIG_PATH, "--start", "--quit-on-end"]
     
     try:
@@ -155,14 +154,15 @@ def run_sumo_logic(model_name, label=""):
                             target_v.record_interaction(observer_v.id, observer_v.perform_action(step))
 
             # --- Logic Updates ---
+            # Order matters: update trust FIRST, then attempt consensus with fresh scores
+            sim.model.update_global_trust(sync_rsus=True)
+            consensus_mgr.attempt_consensus(step + 1)  # 1-indexed step
+            
             if target_swing:
                 swing_global_history.append(target_swing.global_trust_score)
                 if observer:
                      swing_local_history.append(observer.get_windowed_local_trust(target_swing.id, window_size=10))
 
-            consensus_mgr.attempt_consensus(step)
-            sim.model.update_global_trust(sync_rsus=True)
-            
             # Record Detection Count
             # Simple threshold check for the plot
             detected_count = 0
@@ -204,13 +204,12 @@ def run_sumo_simulation(compare=False):
         result = run_sumo_logic('PROPOSED')
         if result:
             print("Generating Single Run Plots...")
-            plot_trust_evolution(result['vehicles'])
-            plot_detection_metrics(result['vehicles'])
-            plot_final_trust_distribution(result['vehicles'])
-            
-            if result['swing_history']:
-                gh, lh = result['swing_history']
-                plot_swing_analysis(gh, lh)
+            out = RESULTS_DIR
+            os.makedirs(out, exist_ok=True)
+            plot_proposed_trust_evolution(result['vehicles'], out)
+            plot_proposed_detection_metrics(result['vehicles'], out)
+            plot_proposed_rank_distribution(result['vehicles'], out)
+            plot_proposed_trust_normalized(result['vehicles'], out)
     
     else:
         # --- COMPARE MODE ---

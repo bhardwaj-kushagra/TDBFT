@@ -20,10 +20,16 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
 try:
     from experiments.run_sumo_experiment import run_sumo_simulation, SUMO_AVAILABLE
-except ImportError:
-    SUMO_AVAILABLE = False
-    def run_sumo_simulation(compare=False):
-        print("SUMO modules not found.")
+except ImportError as e:
+    # Only swallow import errors genuinely caused by missing SUMO/TraCI.
+    # Re-raise other ImportErrors (e.g. stale imports within run_sumo_experiment)
+    # to avoid masking real bugs.
+    if 'traci' in str(e).lower() or 'sumo' in str(e).lower():
+        SUMO_AVAILABLE = False
+        def run_sumo_simulation(compare=False):
+            print("SUMO modules not found.")
+    else:
+        raise
 
 from experiments.config import RESULTS_DIR
 from experiments.benchmark import run_single_simulation

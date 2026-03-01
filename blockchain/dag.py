@@ -13,7 +13,7 @@ class DAG:
         self.blocks: Dict[str, Block] = {}
         # Simple tips management: keep track of blocks that have no children (simplified)
         # For this prototype, we just link to the last N blocks added.
-        self.tips: List[str] = [] 
+        self.tips: set = set()
 
     def add_block(self, data, validator_id, issuer_trust=0.0, n_parents: int = 2, step: int = 0) -> Block:
         """
@@ -29,10 +29,9 @@ class DAG:
         
         # Update tips:
         for p_id in parents:
-            if p_id in self.tips:
-                self.tips.remove(p_id)
+            self.tips.discard(p_id)
         
-        self.tips.append(new_block.id)
+        self.tips.add(new_block.id)
         
         # Propagate TCW (Suggestion A)
         # TCW(b) = Trust(Issuer) + Sum(TCW(children))
@@ -71,9 +70,12 @@ class DAG:
         # Let's use random.choices and dedup.
         
         selected = set()
-        while len(selected) < n_parents:
+        max_attempts = n_parents * 20  # Safety limit to avoid infinite loop with skewed weights
+        attempts = 0
+        while len(selected) < n_parents and attempts < max_attempts:
             pick = random.choices(tip_blocks, weights=weights, k=1)[0]
             selected.add(pick.id)
+            attempts += 1
             
         return list(selected)
 
@@ -89,15 +91,18 @@ class DAG:
         # Given "narrow DAG", we'll allow path-based summation.
         
         queue = list(parent_ids)
-        # However, to prevent absolute infinite loops if cycles exist (bug safety), we limit depth or strict DAG.
-        # Since it's a DAG, no cycles. 
-        # Optim: If block structure is simple, list growth is minimal.
+        # Use a visited set to prevent double-counting in diamond DAG topologies.
+        # Without this, a block reachable via multiple paths gets delta added multiple times.
+        visited = set()
         
         processed_count = 0
         limit = 10000 # Safety break
         
         while queue and processed_count < limit:
             curr_id = queue.pop(0)
+            if curr_id in visited:
+                continue
+            visited.add(curr_id)
             if curr_id in self.blocks:
                 block = self.blocks[curr_id]
                 block.tcw += delta
@@ -131,6 +136,9 @@ class DAG:
         # But for simplicity, let's just append the other tips to our tips
         # and keep the last 5 to avoid explosion.
         
-        combined_tips = list(set(self.tips + other_dag.tips))
-        self.tips = combined_tips[-5:] # Keep latest 5 tips
+        combined_tips = self.tips | other_dag.tips
+        # Keep latest 5 tips (approximate — no ordering guarantee in sets)
+        if len(combined_tips) > 5:
+            combined_tips = set(list(combined_tips)[-5:])
+        self.tips = combined_tips
 

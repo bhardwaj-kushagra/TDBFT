@@ -23,8 +23,7 @@ def run_single_simulation(model_name, num_vehicles=50, percent_malicious=0.1, pe
        - vehicles: final vehicle states
     """
     # Deterministic Seeding for Scientific Validity
-    # Seed is combined with model_name hash to ensure models don't get 'identical' luck
-    # but are reproducible per run.
+    # Same seed produces identical runs for a given model.
     random.seed(seed)
     np.random.seed(seed)
 
@@ -65,7 +64,12 @@ def run_single_simulation(model_name, num_vehicles=50, percent_malicious=0.1, pe
         current_detected_count = 0
         for vid in mal_ids:
             score = vehicles[vid].global_trust_score
-            norm_score = (score - min_v) / range_v if max_v > min_v else 0.5
+            # When all scores are identical (e.g. PBFT returns 1.0 for all),
+            # norm_score should be 0.5 (no information), NOT 0.0 (wrongly flagged).
+            if max_v == min_v:
+                norm_score = 0.5
+            else:
+                norm_score = (score - min_v) / range_v
             
             # Threshold Check from Config
             if norm_score < DETECTION_THRESHOLD: 
