@@ -13,8 +13,14 @@ from trust.bayesian import compute_trust, update_parameters
 # ==============================================================================
 # Helper for Matrix Operations (Shared math, but logic remains separate)
 # ==============================================================================
-def _run_pagerank(M: np.ndarray, n: int, damping: float, max_iter: int, tol: float) -> np.ndarray:
-    """Helper to run the PageRank math on a matrix M."""
+def _run_pagerank(M: np.ndarray, n: int, damping: float, max_iter: int, tol: float, epsilon: float = 0.0001) -> np.ndarray:
+    """Helper to run the PageRank math on a matrix M.
+    
+    epsilon is applied to S *after* dangling-node redistribution so that
+    the zero-row fix is not bypassed. Without this ordering, self-loops
+    added to M before normalization make every row non-zero, preventing
+    the uniform-redistribution fallback from ever firing.
+    """
     # Normalize rows
     row_sums = M.sum(axis=1, keepdims=True)
     
@@ -31,6 +37,15 @@ def _run_pagerank(M: np.ndarray, n: int, damping: float, max_iter: int, tol: flo
     zero_rows = ~non_zero_rows
     if np.any(zero_rows):
         S[zero_rows] = 1.0 / n
+
+    # Add small self-loop epsilon to S (AFTER dangling fix so redistribution fires correctly).
+    # This ensures newcomer nodes with no interactions still receive some trust flow
+    # from the graph structure instead of being self-absorbing (S[i][i] ≈ 1.0).
+    if epsilon > 0:
+        np.fill_diagonal(S, S.diagonal() + epsilon)
+        # Re-normalise rows so S remains a row-stochastic matrix
+        row_sums_s = S.sum(axis=1, keepdims=True)
+        S = S / row_sums_s
     
     # Iterative Power Method
     t_vec = np.ones(n) / n
@@ -57,12 +72,12 @@ def _run_pagerank(M: np.ndarray, n: int, damping: float, max_iter: int, tol: flo
 class ProposedStrategy(TrustStrategy):
     """
     The Main Proposed Model (T-DBFT).
-    Local: Bayesian (Alpha/Beta).
+    Local: Bayesian (Alpha/Beta) with forgetting factor (decay=0.95).
     Global: VehicleRank (PageRank-like) to mitigate sparse attacks.
     """
     def record_interaction(self, vehicle, target_id: str, is_positive: bool):
         alpha, beta = vehicle.interactions.get(target_id, (1.0, 1.0))
-        new_alpha, new_beta = update_parameters(alpha, beta, is_positive)
+        new_alpha, new_beta = update_parameters(alpha, beta, is_positive, decay=0.95)
         vehicle.interactions[target_id] = (new_alpha, new_beta)
 
     def get_local_trust(self, vehicle, target_id: str) -> float:
@@ -103,9 +118,9 @@ class ProposedStrategy(TrustStrategy):
                 cols, values = zip(*valid_updates)
                 M[row_idx, list(cols)] = values
         
-        # Add small self-loop epsilon to ensure connectivity/trust in self (Fixes Issue 9)
-        epsilon = 0.0001
-        np.fill_diagonal(M, M.diagonal() + epsilon)
+        # NOTE: epsilon self-loop is applied INSIDE _run_pagerank, after the dangling-node
+        # redistribution step. Adding it here would make all row sums non-zero, bypassing
+        # the uniform-redistribution fallback for isolated/newcomer nodes.
                 
         # Run PageRank (Core feature of Proposed Model)
         # Using RSU params which can be tuned specifically for PROPOSED
@@ -149,17 +164,20 @@ class PbftStrategy(TrustStrategy):
 class LtPbftStrategy(TrustStrategy):
     """
     Lightweight Trust-Based PBFT.
-    Uses ONLY local trust (Bayesian) + Simple Averaging.
-    Explicitly weaker than PBFT (adds overhead) and Proposed (no Graph trust).
+    Uses ONLY local trust (Bayesian) + Median-Based Aggregation.
     
-    NOTE: Global aggregation is intentionally identical to BTVR (simple averaging).
-    The differentiation is in consensus: LT_PBFT uses check_consensus_simple
-    (1-node-1-vote) vs BTVR's check_consensus_weighted (trust-weighted votes).
-    See ConsensusManager for the branching logic.
+    Global aggregation uses MEDIAN (not mean) to provide basic outlier robustness
+    without the computational overhead of graph algorithms.
+    This makes it distinguishable from BTVR (which uses mean averaging):
+    LT-PBFT is slightly more robust to bad-mouthing reports but still
+    significantly weaker than PROPOSED (no graph-rank influence).
+    
+    Consensus: check_consensus_simple (1-node-1-vote), matching the original
+    PBFT "lightweight" philosophy of equal-weight voting.
     """
     def record_interaction(self, vehicle, target_id: str, is_positive: bool):
         alpha, beta = vehicle.interactions.get(target_id, (1.0, 1.0))
-        new_alpha, new_beta = update_parameters(alpha, beta, is_positive)
+        new_alpha, new_beta = update_parameters(alpha, beta, is_positive, decay=0.95)
         vehicle.interactions[target_id] = (new_alpha, new_beta)
 
     def get_local_trust(self, vehicle, target_id: str) -> float:
@@ -170,8 +188,9 @@ class LtPbftStrategy(TrustStrategy):
         return dict(vehicle.interactions)
 
     def compute_global_trust(self, rsu, all_ids: List[str], reports: Dict) -> Dict[str, float]:
-        # REPLACED: Use Simple Averaging instead of PageRank
-        # This matches "Lightweight" and ensures it's distinguishable from Proposed
+        # Median-based aggregation: more robust than mean (BTVR) but no graph.
+        # Median suppresses the effect of extreme slanderous reports that inflate
+        # interaction counts in mean-based methods.
         scores = {vid: [] for vid in all_ids}
         
         for reporter_id, targets in reports.items():
@@ -182,7 +201,7 @@ class LtPbftStrategy(TrustStrategy):
         result = {}
         for vid, val_list in scores.items():
             if val_list:
-                result[vid] = sum(val_list) / len(val_list)
+                result[vid] = float(np.median(val_list))
             else:
                 result[vid] = 0.5
         return result
@@ -193,16 +212,18 @@ class LtPbftStrategy(TrustStrategy):
 # ==============================================================================
 class BtvrStrategy(TrustStrategy):
     """
-    BTVR: Standard Bayesian Local + Simple Averaging Global.
+    BTVR: Standard Bayesian Local + Simple Mean Averaging Global.
     A baseline for "Basic Trust".
     
-    NOTE: Global aggregation is intentionally identical to LT_PBFT.
-    The differentiation is in consensus: BTVR uses check_consensus_weighted
-    (trust-weighted votes) vs LT_PBFT's check_consensus_simple (1-node-1-vote).
+    NOTE: Global aggregation uses unweighted arithmetic mean.
+    LT_PBFT uses median aggregation (more robust).
+    The models are further differentiated by consensus type:
+    BTVR uses check_consensus_weighted (trust-weighted votes)
+    vs LT_PBFT's check_consensus_simple (1-node-1-vote).
     """
     def record_interaction(self, vehicle, target_id: str, is_positive: bool):
         alpha, beta = vehicle.interactions.get(target_id, (1.0, 1.0))
-        new_alpha, new_beta = update_parameters(alpha, beta, is_positive)
+        new_alpha, new_beta = update_parameters(alpha, beta, is_positive, decay=0.95)
         vehicle.interactions[target_id] = (new_alpha, new_beta)
 
     def get_local_trust(self, vehicle, target_id: str) -> float:
@@ -240,7 +261,7 @@ class CobatsStrategy(TrustStrategy):
     """
     def record_interaction(self, vehicle, target_id: str, is_positive: bool):
         alpha, beta = vehicle.interactions.get(target_id, (1.0, 1.0))
-        new_alpha, new_beta = update_parameters(alpha, beta, is_positive)
+        new_alpha, new_beta = update_parameters(alpha, beta, is_positive, decay=0.95)
         vehicle.interactions[target_id] = (new_alpha, new_beta)
 
     def get_local_trust(self, vehicle, target_id: str) -> float:

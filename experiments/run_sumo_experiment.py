@@ -56,6 +56,7 @@ from experiments.plots import (
     plot_proposed_rank_distribution,
     plot_proposed_trust_normalized
 )
+from experiments.benchmark import count_detected_malicious
 import matplotlib.pyplot as plt
 
 def run_sumo_logic(model_name, label=""):
@@ -163,14 +164,11 @@ def run_sumo_logic(model_name, label=""):
                 if observer:
                      swing_local_history.append(observer.get_windowed_local_trust(target_swing.id, window_size=10))
 
-            # Record Detection Count
-            # Simple threshold check for the plot
-            detected_count = 0
-            for vid in mal_ids:
-                 score = sim.model.vehicles[vid].global_trust_score
-                 # Rough threshold for quick metric, actual logic is in plots
-                 if score < 0.4: 
-                     detected_count += 1
+            # Record Detection Count (normalized threshold — matches benchmark.py logic)
+            detected_count = count_detected_malicious(
+                vehicles=sim.model.vehicles,
+                malicious_ids=mal_ids,
+            )
             detection_history.append(detected_count)
 
             step += 1

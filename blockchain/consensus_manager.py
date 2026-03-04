@@ -8,13 +8,14 @@ Abstracts the blockchain consensus process:
 
 This removes duplicate logic from the experiment runners.
 """
-from typing import List, Dict
+from typing import List, Dict, Optional
 from blockchain.validator import select_validators, check_consensus_weighted, check_consensus_simple
 from blockchain.dag import DAG
 from blockchain.block import Block
+from experiments.config import COMMITTEE_SIZE
 
 class ConsensusManager:
-    def __init__(self, model_type: str, vehicles: Dict, dag: DAG = None):
+    def __init__(self, model_type: str, vehicles: Dict, dag: Optional[DAG] = None):
         """
         Args:
             model_type: The trust model being used (determines voting logic).
@@ -28,7 +29,7 @@ class ConsensusManager:
         self.consensus_success_count = 0
         self.total_consensus_rounds = 0
 
-    def attempt_consensus(self, step: int, committee_size: int = 5) -> bool:
+    def attempt_consensus(self, step: int, committee_size: int = COMMITTEE_SIZE) -> bool:
         """
         Runs one round of consensus.
         

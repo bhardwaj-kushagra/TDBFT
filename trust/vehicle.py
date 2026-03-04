@@ -14,11 +14,8 @@ class Vehicle:
     BEHAVIOR_HONEST = 'HONEST'
     BEHAVIOR_MALICIOUS = 'MALICIOUS'
     BEHAVIOR_SWING = 'SWING'
-    
-    # Configuration
-    SWING_CYCLE_LENGTH = 50
 
-    def __init__(self, vehicle_id: str, behavior_type: str = 'HONEST', model_type: str = 'PROPOSED', attack_intensity: float = 0.8):
+    def __init__(self, vehicle_id: str, behavior_type: str = 'HONEST', model_type: str = 'PROPOSED', attack_intensity: float = 0.8, swing_cycle_length: int = 50):
         """
         Initialize a vehicle.
         
@@ -28,6 +25,7 @@ class Vehicle:
             model_type (str): Trust model to use.
             attack_intensity (float): Probability of bad behavior when acting explicitly malicious.
                                     0.2 = Low, 0.5 = Medium, 0.9 = High.
+            swing_cycle_length (int): Steps per swing phase. Injected from config to stay in sync.
         """
         self.id = vehicle_id
         self.behavior_type = behavior_type
@@ -56,6 +54,10 @@ class Vehicle:
         # History of global trust score for plotting
         self.trust_history = [0.5]
         
+        # Inject cycle length from config (via TrustModel) so changing config.SWING_CYCLE_LENGTH
+        # actually affects vehicle behavior without needing a hardcoded class attribute.
+        self.SWING_CYCLE_LENGTH = swing_cycle_length
+
         # Audit Fix #11: Desynchronize Swing Attackers
         # Give each swing attacker a random phase offset so they don't flip simultaneously
         self.swing_offset = random.randint(0, self.SWING_CYCLE_LENGTH) if self.behavior_type == self.BEHAVIOR_SWING else 0

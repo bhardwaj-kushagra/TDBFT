@@ -5,8 +5,9 @@ Selects top-N trusted vehicles to be validators.
 Implements Section IV-A (Committee Selection).
 """
 from typing import List
+from experiments.config import COMMITTEE_SIZE
 
-def select_validators(ranked_vehicles: List, top_n: int = 3) -> List:
+def select_validators(ranked_vehicles: List, top_n: int = COMMITTEE_SIZE) -> List:
     """
     Selects the top C vehicles to form the consensus committee.
     

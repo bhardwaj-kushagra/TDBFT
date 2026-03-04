@@ -23,6 +23,9 @@ DEFAULT_ATTACK_INTENSITY = 0.8     # Probability of bad behavior for malicious n
 SWING_CYCLE_LENGTH = 50            # How many steps a swing attacker behaves nicely/badly
 DETECTION_THRESHOLD = 0.35         # Normalized trust score below which a node is flagged
 
+# Consensus Committee
+COMMITTEE_SIZE = 5                 # Number of validators selected per round (top-N by trust)
+
 # SUMO Specific
 INTERACTION_RANGE = 100.0          # Meters
 INTERACTION_PROBABILITY = 0.3      # Chance to interact if in range

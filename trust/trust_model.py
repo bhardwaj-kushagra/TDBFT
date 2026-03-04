@@ -5,9 +5,11 @@ Manages the simulation environment, vehicles, and RSUs.
 Orchestrates the cycle of: Interaction -> Local Update -> Global Aggregation.
 """
 import random
+import warnings
 from typing import List, Dict
 from .vehicle import Vehicle
 from .rsu import RSU
+from experiments.config import SWING_CYCLE_LENGTH
 
 class TrustModel:
     def __init__(self, num_vehicles: int, percent_malicious: float = 0.1, percent_swing: float = 0.05, num_rsus: int = 2, model_type: str = 'PROPOSED', attack_intensity: float = 0.8):
@@ -31,7 +33,23 @@ class TrustModel:
         # [num_malicious + num_swing ... N) -> Honest
         num_malicious = int(num_vehicles * percent_malicious)
         num_swing = int(num_vehicles * percent_swing)
-        
+
+        # Warn when integer truncation silently removes an entire attacker category.
+        # This is especially common with small vehicle counts (e.g., DAG-structure visualisation
+        # uses N=10 with percent_swing=0.05 → int(0.5) = 0 swing attackers with no indication).
+        if percent_malicious > 0 and num_malicious == 0:
+            warnings.warn(
+                f"percent_malicious={percent_malicious} with N={num_vehicles} rounds to 0 "
+                f"malicious vehicles. Increase N or percent_malicious.",
+                RuntimeWarning, stacklevel=2
+            )
+        if percent_swing > 0 and num_swing == 0:
+            warnings.warn(
+                f"percent_swing={percent_swing} with N={num_vehicles} rounds to 0 "
+                f"swing vehicles. Increase N or percent_swing.",
+                RuntimeWarning, stacklevel=2
+            )
+
         # Create Vehicles
         for i in range(num_vehicles):
             vid = f"V{i:03d}"
@@ -43,7 +61,13 @@ class TrustModel:
             else:
                 behavior = Vehicle.BEHAVIOR_HONEST
                 
-            self.vehicles[vid] = Vehicle(vid, behavior_type=behavior, model_type=model_type, attack_intensity=attack_intensity)
+            self.vehicles[vid] = Vehicle(
+                vid,
+                behavior_type=behavior,
+                model_type=model_type,
+                attack_intensity=attack_intensity,
+                swing_cycle_length=SWING_CYCLE_LENGTH,  # Injected from config
+            )
             
             # Assign to RSU
             assigned_rsu = self.rsus[i % len(self.rsus)]

@@ -23,7 +23,8 @@ def compute_trust(alpha: float, beta: float) -> float:
     return alpha / (alpha + beta)
 
 def update_parameters(current_alpha: float, current_beta: float, 
-                      is_positive: bool, weight: float = 1.0) -> tuple:
+                      is_positive: bool, weight: float = 1.0,
+                      decay: float = 1.0) -> tuple:
     """
     Updates alpha and beta parameters based on a new interaction.
     Matches the accumulation of yij and nij in Section III-A.
@@ -33,11 +34,17 @@ def update_parameters(current_alpha: float, current_beta: float,
         current_beta (float): Current beta value.
         is_positive (bool): True if interaction was good, False if bad.
         weight (float): Weight of the interaction (default=1.0).
+        decay (float): Forgetting factor in (0, 1]. Values < 1.0 discount old
+                       evidence so the model can react to Swing/Betrayal attacks.
+                       decay=1.0 (default) means no forgetting (original behavior).
         
     Returns:
         tuple: (new_alpha, new_beta)
     """
+    # Apply forgetting factor before accumulating new evidence
+    decayed_alpha = decay * current_alpha
+    decayed_beta  = decay * current_beta
     if is_positive:
-        return current_alpha + weight, current_beta
+        return decayed_alpha + weight, decayed_beta
     else:
-        return current_alpha, current_beta + weight
+        return decayed_alpha, decayed_beta + weight
