@@ -47,9 +47,9 @@ import numpy as np
 import os
 
 from experiments.config import (
-    MODELS, COLORS, LINE_STYLES, LINE_WIDTHS, get_style, RESULTS_DIR
+    MODELS, COLORS, LINE_STYLES, LINE_WIDTHS, get_style, RESULTS_DIR, DETECTION_THRESHOLD
 )
-from experiments.benchmark import run_single_simulation
+from experiments.benchmark import run_single_simulation, get_normalized_detection_scores
 from trust.simulator import Simulator
 from blockchain.consensus_manager import ConsensusManager
 
@@ -527,7 +527,7 @@ def plot_comp_convergence(out_dir):
     threshold = max(1, int(0.05 * n_vehicles))  # Match proposed_trust_convergence threshold
     fig, ax = plt.subplots()
     for model in MODELS:
-        sim = Simulator(model_type=model, num_vehicles=n_vehicles, percent_malicious=0.1, percent_swing=0.05)
+        sim = Simulator(model_type=model, num_vehicles=n_vehicles, percent_malicious=0.1, percent_swing=0.0)
         ranks_hist = []
         for t in range(steps):
             sim.model.simulate_interaction_step(25)
@@ -572,7 +572,7 @@ def plot_comp_consensus(out_dir):
 
 
 def plot_comp_detection_tpr(out_dir):
-    """All models: detection TPR at the 30th-percentile threshold."""
+    """All models: detection TPR under the shared normalized threshold logic."""
     print("Generating comp_detection_tpr ...")
     ratios = [0.1, 0.15, 0.2, 0.25, 0.3]
     tpr_data = {m: [] for m in MODELS}
@@ -580,21 +580,20 @@ def plot_comp_detection_tpr(out_dir):
         for model in MODELS:
             res = run_single_simulation(model, steps=80, percent_malicious=ratio)
             vehicles = res['vehicles']
-            norm = normalize_histories(vehicles)
             mal_ids = [v.id for v in vehicles.values() if v.is_malicious]
-            if not mal_ids or not norm:
+            if not mal_ids or not vehicles:
                 tpr_data[model].append(0)
                 continue
-            scores = [norm[vid][-1] for vid in vehicles]
-            thresh = np.percentile(scores, 30)
-            tp = sum(1 for vid in mal_ids if norm[vid][-1] < thresh)
+
+            norm_scores = get_normalized_detection_scores(vehicles)
+            tp = sum(1 for vid in mal_ids if norm_scores.get(vid, 0.5) < DETECTION_THRESHOLD)
             tpr_data[model].append(tp / len(mal_ids) * 100)
 
     fig, ax = plt.subplots()
     x_labels = [f"{int(r * 100)}%" for r in ratios]
     for model in MODELS:
         ax.plot(x_labels, tpr_data[model], marker='o', **get_style(model))
-    ax.set_title("Detection TPR at 30th-Percentile Threshold")
+    ax.set_title(f"Detection TPR at Threshold = {DETECTION_THRESHOLD:.2f}")
     ax.set_xlabel("Malicious Ratio")
     ax.set_ylabel("True Positive Rate (%)")
     ax.legend()

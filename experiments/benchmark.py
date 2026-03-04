@@ -12,6 +12,34 @@ from experiments.config import (
     DEFAULT_STEPS, INTERACTIONS_PER_STEP_RATIO, DETECTION_THRESHOLD
 )
 
+
+def get_normalized_detection_scores(vehicles):
+    """Return per-vehicle normalized trust scores for detection logic.
+
+    Uses min-max normalization across current population trust scores.
+    If all scores are identical, returns 0.5 for all vehicles (no information).
+    """
+    if not vehicles:
+        return {}
+
+    raw_vals = [v.global_trust_score for v in vehicles.values()]
+    min_v, max_v = min(raw_vals), max(raw_vals)
+
+    if max_v == min_v:
+        return {vid: 0.5 for vid in vehicles.keys()}
+
+    range_v = max_v - min_v
+    return {
+        vid: (vehicle.global_trust_score - min_v) / range_v
+        for vid, vehicle in vehicles.items()
+    }
+
+
+def count_detected_malicious(vehicles, malicious_ids, threshold=DETECTION_THRESHOLD):
+    """Count malicious vehicles detected under the configured normalized threshold."""
+    norm_scores = get_normalized_detection_scores(vehicles)
+    return sum(1 for vid in malicious_ids if norm_scores.get(vid, 0.5) < threshold)
+
 def run_single_simulation(model_name, num_vehicles=50, percent_malicious=0.1, percent_swing=0.0, 
                           steps=DEFAULT_STEPS, attack_intensity=0.8, interactions_per_step=None, seed=42):
     """
@@ -55,25 +83,11 @@ def run_single_simulation(model_name, num_vehicles=50, percent_malicious=0.1, pe
         
         # 3. Detect (Normalized Threshold Logic)
         vehicles = sim.model.vehicles
-        
-        # Normalize scores to [0, 1] relative to population
-        raw_vals = [v.global_trust_score for v in vehicles.values()]
-        min_v, max_v = min(raw_vals), max(raw_vals)
-        range_v = max_v - min_v if max_v > min_v else 1.0
-        
-        current_detected_count = 0
-        for vid in mal_ids:
-            score = vehicles[vid].global_trust_score
-            # When all scores are identical (e.g. PBFT returns 1.0 for all),
-            # norm_score should be 0.5 (no information), NOT 0.0 (wrongly flagged).
-            if max_v == min_v:
-                norm_score = 0.5
-            else:
-                norm_score = (score - min_v) / range_v
-            
-            # Threshold Check from Config
-            if norm_score < DETECTION_THRESHOLD: 
-                current_detected_count += 1
+        current_detected_count = count_detected_malicious(
+            vehicles=vehicles,
+            malicious_ids=mal_ids,
+            threshold=DETECTION_THRESHOLD,
+        )
         
         detected_history.append(current_detected_count)
         

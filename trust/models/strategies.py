@@ -70,7 +70,7 @@ class ProposedStrategy(TrustStrategy):
         return compute_trust(alpha, beta)
 
     def get_trust_reports(self, vehicle) -> Dict:
-        return vehicle.interactions
+        return dict(vehicle.interactions)
 
     def compute_global_trust(self, rsu, all_ids: List[str], reports: Dict) -> Dict[str, float]:
         n = len(all_ids)
@@ -167,7 +167,7 @@ class LtPbftStrategy(TrustStrategy):
         return compute_trust(alpha, beta)
 
     def get_trust_reports(self, vehicle) -> Dict:
-        return vehicle.interactions
+        return dict(vehicle.interactions)
 
     def compute_global_trust(self, rsu, all_ids: List[str], reports: Dict) -> Dict[str, float]:
         # REPLACED: Use Simple Averaging instead of PageRank
@@ -210,7 +210,7 @@ class BtvrStrategy(TrustStrategy):
         return compute_trust(alpha, beta)
 
     def get_trust_reports(self, vehicle) -> Dict:
-        return vehicle.interactions
+        return dict(vehicle.interactions)
 
     def compute_global_trust(self, rsu, all_ids: List[str], reports: Dict) -> Dict[str, float]:
         # Logic: Simple Average
@@ -248,7 +248,7 @@ class CobatsStrategy(TrustStrategy):
         return compute_trust(alpha, beta)
 
     def get_trust_reports(self, vehicle) -> Dict:
-        return vehicle.interactions
+        return dict(vehicle.interactions)
 
     def compute_global_trust(self, rsu, all_ids: List[str], reports: Dict) -> Dict[str, float]:
         # Weighted Average based on Confidence (Total Interactions)
@@ -300,7 +300,7 @@ class BsedStrategy(TrustStrategy):
         return c / t
 
     def get_trust_reports(self, vehicle) -> Dict:
-        return vehicle.interactions
+        return dict(vehicle.interactions)
 
     def compute_global_trust(self, rsu, all_ids: List[str], reports: Dict) -> Dict[str, float]:
         # 1. Initial Median (more robust to poisoning than mean)
@@ -382,7 +382,7 @@ class RtmStrategy(TrustStrategy):
         return vehicle.rtm_trust.get(target_id, 0.5)
 
     def get_trust_reports(self, vehicle) -> Dict:
-        return vehicle.rtm_trust
+        return dict(vehicle.rtm_trust)
 
     def compute_global_trust(self, rsu, all_ids: List[str], reports: Dict) -> Dict[str, float]:
         # RTM typically transmits the reputation value directly.

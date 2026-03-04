@@ -46,6 +46,9 @@ class RSU:
         Merges trust knowledge from another RSU. 
         For VehicleRank, we simulate consensus by averaging the final vectors.
         (Abstracted Consensus Trust Update - Section IV)
+
+        Note: For multi-RSU fusion rounds, TrustModel now performs snapshot-based
+        symmetric fusion to avoid order-dependent in-place bias.
         """
         for vid, score in other_knowledge.items():
             my_score = self.global_trust_vector.get(vid, 0.5)

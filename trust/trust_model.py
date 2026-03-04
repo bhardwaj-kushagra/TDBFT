@@ -111,11 +111,16 @@ class TrustModel:
         
         # Phase 3: RSU Synchronization (Consensus) - Section IV
         if sync_rsus:
-            # Sync the computed Global Trust Vectors
+            # Symmetric fusion from a snapshot to avoid order-dependent in-place averaging.
+            # Each RSU receives the same fused vector in this round.
+            snapshot_vectors = [dict(rsu.global_trust_vector) for rsu in self.rsus]
+            fused_vector = {}
+            for vid in all_ids:
+                vals = [vec.get(vid, 0.5) for vec in snapshot_vectors]
+                fused_vector[vid] = sum(vals) / len(vals) if vals else 0.5
+
             for rsu in self.rsus:
-                for other_rsu in self.rsus:
-                    if rsu.id != other_rsu.id:
-                        rsu.incorporate_peer_knowledge(other_rsu.global_trust_vector)
+                rsu.global_trust_vector = dict(fused_vector)
 
         # Phase 4: Push Final Scores back to vehicles
         for vid, v in self.vehicles.items():
