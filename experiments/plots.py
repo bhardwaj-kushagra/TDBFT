@@ -43,6 +43,7 @@ Complete output manifest (22 files):
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 from matplotlib.lines import Line2D
+import matplotlib.patheffects as pe
 import numpy as np
 import os
 
@@ -57,13 +58,13 @@ from blockchain.consensus_manager import ConsensusManager
 plt.rcParams.update({
     "figure.dpi":       300,
     "savefig.dpi":      300,
-    "figure.figsize":   (6, 4),
+    "figure.figsize":   (6.5, 4),
     "font.size":        14,
     "axes.titlesize":   16,
-    "axes.labelsize":   16,
+    "axes.labelsize":   15,
     "xtick.labelsize":  12,
     "ytick.labelsize":  12,
-    "legend.fontsize":  10,
+    "legend.fontsize":  9,
     "lines.linewidth":  2,
     "grid.alpha":       0.3,
 })
@@ -73,6 +74,7 @@ plt.rcParams.update({
 def _save(fig, path):
     """Ensure directory exists, save figure, print confirmation, close."""
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    plt.tight_layout()
     fig.savefig(path, dpi=300, bbox_inches="tight")
     print(f"  [saved] {path}")
     plt.close(fig)
@@ -274,6 +276,7 @@ def plot_proposed_rank_distribution(vehicles, out_dir):
             )
 
     fig, ax = plt.subplots(figsize=(8, 4))
+    plt.subplots_adjust(top=0.85)
     ax.scatter(ranks, perturbed, c=colors, s=100, alpha=0.7)
 
     if n_v >= committee_size:
@@ -281,15 +284,11 @@ def plot_proposed_rank_distribution(vehicles, out_dir):
         ax.axvline(x=committee_size + 0.5, color='blue', linestyle='--', label='Committee Cutoff')
         ax.axhline(y=cutoff_y, color='gray', linestyle=':', alpha=0.7, linewidth=1.2)
 
-    # Label ONLY the top-K committee nodes
-    for i in range(min(committee_size, n_v)):
-        ax.annotate(ids[i], (ranks[i], perturbed[i]),
-                    fontsize=10, alpha=0.88,
-                    xytext=(5, 5), textcoords='offset points')
-
     ax.set_title("Top-K committee selection using\nnormalized global trust (NPTS)")
     ax.set_xlabel("Rank (1 = Highest Trust)")
     ax.set_ylabel("Normalised Global Trust (NPTS)")
+    ax.set_xlim(0, 52)
+    ax.set_ylim(0, 1.08)
     custom = [Line2D([0], [0], color='green', marker='o', linestyle=''),
               Line2D([0], [0], color='red',   marker='o', linestyle='')]
     ax.legend(custom, ['Honest', 'Malicious'])
@@ -356,12 +355,6 @@ def plot_proposed_swing_analysis(out_dir):
     ax.set_ylabel("Trust Score (NPTS)")
     ax.legend()
     ax.grid(True)
-    props = dict(boxstyle='round', facecolor='wheat', alpha=0.2)
-    ax.text(0.05, 0.05,
-            "While swing attackers manipulate local trust,\n"
-            "their global trust remains suppressed due to\n"
-            "temporal smoothing and network-wide propagation.",
-            transform=ax.transAxes, fontsize=10, verticalalignment='bottom', bbox=props)
     _save(fig, os.path.join(out_dir, "figure4b_npts_swing_stability.png"))
 
 
@@ -438,11 +431,11 @@ def plot_proposed_trust_normalized(vehicles, out_dir):
             z_plot += rng_mz.standard_normal(len(z_plot)) * 0.08
         ax.plot(steps[burn_in:], z_plot, label=f'{cat} (Z-Score)', markevery=10)
     ax.axhline(0, color='black', linestyle='--', alpha=0.5)
-    ax.fill_between(steps[burn_in:], -1, 1, color='gray', alpha=0.2, label='\u00b11 Std Dev')
+    ax.fill_between(steps[burn_in:], -1, 1, color='gray', alpha=0.12, label='\u00b11 Std Dev')
     ax.set_title("Z-score distinction of honest,\nmalicious, and swing nodes")
     ax.set_xlabel("Simulation Step")
     ax.set_ylabel("Z-Score (Std Devs from Global Mean)")
-    ax.legend()
+    ax.legend(loc='upper left', ncol=2, fontsize=9, frameon=True)
     ax.grid(True)
     _save(fig, os.path.join(out_dir, "figure5a_zscore_distinction.png"))
 
@@ -535,13 +528,14 @@ def plot_comp_capacity(out_dir):
         proposed[-1] = proposed[-2] * 0.95   # force ~5% drop at last step
     cap['PROPOSED'] = proposed
 
-    fig, ax = plt.subplots()
+    fig, ax = plt.subplots(figsize=(8, 4))
     for model in MODELS:
         ax.plot(sizes, cap[model], **get_style(model))
     ax.set_title("Throughput degradation vs. network size")
     ax.set_xlabel("Network Size (Number of Vehicles)")
     ax.set_ylabel("Throughput Capacity Index")
-    ax.legend()
+    ax.legend(loc="center left", bbox_to_anchor=(1.02, 0.5),
+             fontsize=9, frameon=True)
     ax.grid(True, alpha=0.3)
     _save(fig, os.path.join(out_dir, "figure6a_throughput_degradation.png"))
     return sizes, cap
@@ -553,7 +547,8 @@ def plot_comp_throughput(sizes, cap, out_dir):
     """
     print("Generating comp_throughput ...")
     rng = np.random.default_rng(seed=53)
-    fig, ax = plt.subplots(figsize=(8, 4))
+    fig, ax = plt.subplots(figsize=(8, 5))
+    plt.subplots_adjust(top=0.88)
     x = np.arange(len(sizes))
     width = 0.12
     for i, model in enumerate(MODELS):
@@ -568,7 +563,11 @@ def plot_comp_throughput(sizes, cap, out_dir):
     ax.set_ylabel("TPS Capacity Index")
     ax.set_xticks(x)
     ax.set_xticklabels([str(s) for s in sizes])
-    ax.legend()
+    ax.legend(
+        loc='upper right',
+        fontsize=9,
+        frameon=True
+    )
     ax.grid(axis='y', alpha=0.3)
     _save(fig, os.path.join(out_dir, "figure6b_tps_performance.png"))
 
@@ -661,13 +660,14 @@ def plot_comp_swing_attack(out_dir):
                 vals[k] = vals[k - 1] + rng.uniform(0.5, 2.5)
         res_s[model] = list(np.clip(vals, 0, 100))
 
-    fig, ax = plt.subplots()
+    fig, ax = plt.subplots(figsize=(8, 4))
     for model in MODELS:
         ax.plot(labels, res_s[model], **get_style(model))
     ax.set_title("Swing attack success rate vs. intensity")
     ax.set_xlabel("Attack Intensity")
     ax.set_ylabel("Attack Success Rate (%)")
-    ax.legend()
+    ax.legend(loc="center left", bbox_to_anchor=(1.02, 0.5),
+             fontsize=9, frameon=True)
     ax.grid(True, alpha=0.3)
     _save(fig, os.path.join(out_dir, "figure7a_swing_attack_success.png"))
     return intensities, labels
