@@ -13,6 +13,10 @@ eggs/
 .eggs/
 ISSUES_AND_CORRECTIONS_AUDIT.md
 docs/GRAPH_ANALYSIS_AND_IMPROVEMENTS.md
+docs/
+formal_verification/
+verification/
+security tools.pdf
 lib/
 lib64/
 parts/
@@ -63,4 +67,6 @@ results/
 *.net.xml
 *.rou.xml
 *.trips.xml
+*.osm
+sumo/maps/
 
